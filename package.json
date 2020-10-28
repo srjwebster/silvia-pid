@@ -1,0 +1,22 @@
+{
+  "name": "silvia-pid",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"No test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "srjwebster",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.17.1",
+    "pigpio": "^3.2.3",
+    "thermocouple-converter": "^1.0.1"
+  },
+  "devDependencies": {
+    "cors": "^2.8.5",
+    "liquid-pid": "^1.0.0",
+    "mongodb": "^3.6.2"
+  }
+}

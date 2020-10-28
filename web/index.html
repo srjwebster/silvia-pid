@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Wouldn't you like to know, coffee boy</title>
+</head>
+<body>
+<canvas id="myChart"></canvas>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@2.8.0"></script>
+<script type="text/javascript">
+  let getJSON = function(url, callback) {
+    let xhr = new XMLHttpRequest();
+    xhr.open('GET', url, true);
+    xhr.responseType = 'json';
+    xhr.onload = function() {
+      let status = xhr.status;
+      if (status === 200) {
+        callback(null, xhr.response);
+      } else {
+        callback(status, xhr.response);
+      }
+    };
+    xhr.send();
+  };
+
+  let ctx = document.getElementById('myChart').getContext('2d');
+  let chart = new Chart(ctx, {
+    // The type of chart we want to create
+    type: 'line',
+    // The data for our dataset
+    data: {
+      labels: [],
+      datasets: [
+        {
+          label: 'Water Temperature',
+          backgroundColor: 'rgb(255, 99, 132)',
+          borderColor: 'rgb(255, 99, 132)',
+          data: [],
+          fill: false,
+        },
+        {
+          label: 'Output',
+          backgroundColor: 'rgb(54, 162, 235)',
+          borderColor: 'rgb(54, 162, 235)',
+          data: [],
+          fill: false,
+        },
+      ],
+    },
+    // Configuration options go here
+    options: {
+      responsive: true,
+      scales: {
+        yAxes: [
+          {
+            display: true,
+            position: 'left',
+            scaleLabel: {
+              display: true,
+              labelString: 'Temperature',
+            },
+            ticks: {
+              beginAtZero: true,
+              suggestedMax: 140,
+              min: 0,
+              stepSize: 5,
+            },
+          }, {
+            display: true,
+            position: 'right',
+            scaleLabel: {
+              display: true,
+              labelString: 'Temperature',
+            },
+            ticks: {
+              beginAtZero: true,
+              suggestedMax: 140,
+              min: 0,
+              stepSize: 5,
+            },
+          },
+        ],
+      },
+    },
+  });
+  setInterval(() => {
+    getJSON(
+        'api/temp/get/600',
+        function(err, data) {
+          if (err !== null) {
+            alert('Something went wrong: ' + err);
+          } else {
+            let temps = [];
+            let output = [];
+            let labels = [];
+
+            data.forEach(function(item, index) {
+              temps.unshift(item.temperature);
+              labels.unshift(new Date(item.timestamp).toLocaleTimeString('en-GB'));
+              output.unshift(item.output);
+            });
+            chart.data.datasets[0].data = temps;
+            chart.data.datasets[1].data = output;
+            chart.data.labels = labels;
+            chart.update();
+          }
+        },
+    );
+  }, 1000);
+</script>
+</body>
+</html>

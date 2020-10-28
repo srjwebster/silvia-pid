@@ -1,0 +1,6 @@
+{
+  "target_temperature": 100,
+  "proportional":  3.0,
+  "integral" : 1,
+  "derivative": 80.0
+}
