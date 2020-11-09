@@ -17,43 +17,33 @@ let i = 1;
 
 const url = 'mongodb://localhost:27017';
 // Database Name
-const client = new MongoClient(url, {useNewUrlParser: true});
+const client = new MongoClient(url, {useUnifiedTopology: true});
+client.connect().then(() => {
+});
 
 // Use connect method to connect to the server
-
-function insert(temperature, output) {
-  client.connect(function(err, mongoClient) {
-    const db = mongoClient.db('pid');
-    const collection = db.collection('documents');
-    // Insert some documents
-    collection.insertOne([
-      {
-        'temperature': temperature,
-        'output': output,
-        'timestamp': Date.now(),
-      }]);
+async function insert(temperature, output) {
+  try {
+    const database = client.db('pid');
+    const collection = database.collection('temperatures');
+    await collection.insertOne(
+        {
+          'temperature': temperature,
+          'output': output,
+          'timestamp': Date.now(),
+        }).catch(function(err) {
+      console.log(err);
+    });
     i++;
     if (i >= 1000) {
-      collection.deleteMany({timestamp: {$lt: Date.now() - 86400000}});
+      await collection.deleteMany({timestamp: {$lt: Date.now() - 86400000}});
+      i = 1;
     }
-  });
-  client.close();
-}
+  } catch (e) {
+    console.log(e);
+  } finally {
 
-function getTemp() {
-  return new Promise((resolve, reject) => {
-    let temp;
-    let temperatureProcess = spawn('python3', ['temperature.py']);
-    temperatureProcess.stdout.on('data', (data) => {
-      temp = data.toString().trim();
-    });
-    temperatureProcess.on('close', function() {
-      SSROutput = Math.round(pidController.calculate(temp));
-      boiler.pwmWrite(SSROutput);
-      insert(temp, (SSROutput / 255) * 100);
-      console.log(temp);
-    });
-  });
+  }
 }
 
 setInterval(() => {
@@ -76,13 +66,35 @@ setInterval(() => {
     Kd: integral,             // PID: Kd
   });
 
-  getTemp();
+  getTemp(function(temperature) {
+    SSROutput = Math.round(pidController.calculate(temperature));
+    boiler.pwmWrite(SSROutput);
+    insert(temperature, (SSROutput / 255) * 100).then(() => {
+      //console.log(temperature);
+    });
+  }).then(r => () => {
+  });
 
 }, 1000);
 
+async function getTemp(callback) {
+  return new Promise((resolve, reject) => {
+    let temp = 150;
+    let temperatureProcess = spawn('python3', ['temperature.py']);
+    temperatureProcess.stdout.on('data', (data) => {
+      temp = data.toString().trim();
+    });
+    temperatureProcess.on('close', function(code) {
+      return callback(temp);
+    });
+  });
+}
+
 function exitHandler(options, exitCode) {
+
   if (options.cleanup) boiler.pwmWrite(0);
   if (options.exit) process.exit();
+  client.close();
 }
 
 //do something when app is closing

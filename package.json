@@ -11,12 +11,15 @@
   "license": "ISC",
   "dependencies": {
     "express": "^4.17.1",
-    "pigpio": "^3.2.3",
-    "thermocouple-converter": "^1.0.1"
+    "socket.io": "^2.3.0",
+    "pigpio": "^3.2.3"
   },
   "devDependencies": {
     "cors": "^2.8.5",
     "liquid-pid": "^1.0.0",
     "mongodb": "^3.6.2"
+  },
+  "nothing": {
+    "max31855": "github:maugdog/max31855"
   }
 }

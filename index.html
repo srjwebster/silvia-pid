@@ -6,7 +6,9 @@
 </head>
 <body>
 <canvas id="myChart"></canvas>
+<div><h3>Current Temp:<span class="temp"></span></h3></div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@2.8.0"></script>
+<script src="/socket.io/socket.io.js"></script>
 <script type="text/javascript">
   let getJSON = function(url, callback) {
     let xhr = new XMLHttpRequest();
@@ -61,7 +63,7 @@
             },
             ticks: {
               beginAtZero: true,
-              suggestedMax: 140,
+              max: 160,
               min: 0,
               stepSize: 5,
             },
@@ -74,7 +76,7 @@
             },
             ticks: {
               beginAtZero: true,
-              suggestedMax: 140,
+              max: 160,
               min: 0,
               stepSize: 5,
             },
@@ -83,30 +85,42 @@
       },
     },
   });
-  setInterval(() => {
-    getJSON(
-        'api/temp/get/600',
-        function(err, data) {
-          if (err !== null) {
-            alert('Something went wrong: ' + err);
-          } else {
-            let temps = [];
-            let output = [];
-            let labels = [];
+  getJSON(
+      'api/temp/get/600',
+      function(err, data) {
+        if (err !== null) {
+          alert('Something went wrong: ' + err);
+        } else {
+          updateChart(data)
+        }
+      },
+  );
 
-            data.forEach(function(item, index) {
-              temps.unshift(item.temperature);
-              labels.unshift(new Date(item.timestamp).toLocaleTimeString('en-GB'));
-              output.unshift(item.output);
-            });
-            chart.data.datasets[0].data = temps;
-            chart.data.datasets[1].data = output;
-            chart.data.labels = labels;
-            chart.update();
-          }
-        },
-    );
-  }, 1000);
+  function updateChart(data){
+    let temps = [];
+    let output = [];
+    let labels = [];
+
+    data.forEach(function(item, index) {
+      temps.unshift(item.temperature);
+      labels.unshift(new Date(item.timestamp).toLocaleTimeString('en-GB'));
+      output.unshift(item.output);
+    });
+    let tempSpan = document.querySelector('span.temp');
+    tempSpan.innerHTML = data[0].temperature;
+    chart.data.datasets[0].data = temps;
+    chart.data.datasets[1].data = output;
+    chart.data.labels = labels;
+    chart.update();
+  }
+</script>
+
+
+<script>
+  let socket = io.connect();
+  socket.on("temp_refresh", (args) => {
+    updateChart(args);
+  })
 </script>
 </body>
 </html>
