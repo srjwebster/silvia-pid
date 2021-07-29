@@ -5,6 +5,8 @@ Created using a V6 E edition Silvia as the guinea pig, results may vary with oth
 
 This PID allows more accurate control of the brew temperatures of the Silvia and provides a more stable temperature (goodbye surfing).
 
-Be aware that this uses a 64 bit version of a MongoDB database. This means stock Raspbian has now power here, I would opt for the latest 64bit ubuntu server distribution. Use the Raspberry PI Imager software to install with ease.
+Be aware that this uses a 64 bit version of a MongoDB database. This means stock Raspbian has no power here, I would opt for the latest 64bit ubuntu server distribution. Use the Raspberry PI Imager software to install with ease.
 
-Once raspi is connected you will need to use apt to install Node, npm and npm to install forever. If you want to host your web thing on a real website address rather than an IP on your network, I'll leave that up to you to figure out.
+Once raspi is connected you will need to use apt to install Node, npm and npm to install "forever". If you want to host your web thing on a real website address rather than an IP on your network, I'll leave that up to you to figure out, but you can visit mine on coffee.srjwebster.com.
+
+Please don't turn on my steamer while I'm brewing, or I'll have to build an authentication layer, which will be most uncool.
