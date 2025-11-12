@@ -1,0 +1,12 @@
+temperature_control:
+  target_temperature: 100
+  hysteresis: 1.0
+  pid:
+    kp: 2.6
+    ki: 0.8
+    kd: 80.0
+hardware:
+  relay_pin: 16
+logging:
+  level: info
+  file: /var/log/silvia-pid.log

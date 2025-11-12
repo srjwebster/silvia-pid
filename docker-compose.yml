@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  # MongoDB database service
+  mongodb:
+    image: mongo:7.0
+    container_name: silvia-mongodb
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_DATABASE=pid
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    networks:
+      - silvia-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  # Silvia PID controller application
+  silvia-pid:
+    build: .
+    container_name: silvia-pid-app
+    restart: unless-stopped
+    privileged: true  # Required for GPIO access
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    environment:
+      - MONGODB_URL=mongodb://mongodb:27017
+      - USE_SSL=${USE_SSL:-false}
+      - SSL_KEY_PATH=${SSL_KEY_PATH:-}
+      - SSL_CERT_PATH=${SSL_CERT_PATH:-}
+      - HTTP_PORT=${HTTP_PORT:-80}
+      - HTTPS_PORT=${HTTPS_PORT:-443}
+    ports:
+      - "${HTTP_PORT:-80}:${HTTP_PORT:-80}"
+      - "${HTTPS_PORT:-443}:${HTTPS_PORT:-443}"
+    volumes:
+      - ./config.json:/app/config.json
+      - silvia_logs:/var/log/silvia-pid
+      - /etc/letsencrypt:/etc/letsencrypt:ro  # SSL certificates (if using)
+    devices:
+      - /dev/gpiomem:/dev/gpiomem  # GPIO access for relay control
+      - /dev/i2c-1:/dev/i2c-1      # I2C access for MCP9600 thermocouple
+    networks:
+      - silvia-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:${HTTP_PORT:-80}/', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+networks:
+  silvia-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+    driver: local
+  mongodb_config:
+    driver: local
+  silvia_logs:
+    driver: local

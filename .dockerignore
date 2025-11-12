@@ -1,0 +1,45 @@
+# Node modules (will be installed in container)
+node_modules/
+npm-debug.log
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+README.md
+*.md
+
+# Deployment files
+deploy/
+scripts/
+
+# Go code (not used)
+silvia-pid/
+cmd/
+internal/
+pkg/
+go.mod
+go.sum
+Makefile
+
+# Docker files
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Environment files
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+

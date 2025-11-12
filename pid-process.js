@@ -1,9 +1,15 @@
 const Gpio = require('pigpio').Gpio;
 const spawn = require('child_process').spawn;
 const fs = require('fs');
-const boiler = new Gpio(16, {mode: Gpio.OUTPUT});
+const boiler = new Gpio(16, {mode: Gpio.OUTPUT}); 
 const liquidPID = require('liquid-pid');
 const MongoClient = require('mongodb').MongoClient;
+
+// Temperature validation constants
+const MIN_TEMP = 0.0;
+const MAX_TEMP = 200.0;
+const TEMP_READ_TIMEOUT = 5000; // 5 seconds
+const MAX_CONSECUTIVE_FAILURES = 5;
 
 let SSROutput = 0;
 let pidController;
@@ -14,8 +20,10 @@ let config_file,
     derivative = 0.3,
     integral = 40.0;
 let i = 1;
+let consecutiveFailures = 0;
+let lastValidTemperature = null;
 
-const url = 'mongodb://localhost:27017';
+const url = process.env.MONGODB_URL || 'mongodb://localhost:27017';
 // Database Name
 const client = new MongoClient(url, {useUnifiedTopology: true});
 client.connect().then(() => {
@@ -70,22 +78,90 @@ setInterval(() => {
     SSROutput = Math.round(pidController.calculate(temperature));
     boiler.pwmWrite(SSROutput);
     insert(temperature, (SSROutput / 255) * 100).then(() => {
-      //console.log(temperature);
+      console.log(`Temperature: ${temperature}°C, Output: ${(SSROutput / 255) * 100}%`);
+    }).catch(err => {
+      console.error('Failed to insert temperature data:', err);
     });
-  }).then(r => () => {
+  }).catch(err => {
+    console.error('Failed to read temperature:', err.message);
+    // Don't update PID or heater if temperature read failed
   });
 
 }, 1000);
 
 async function getTemp(callback) {
   return new Promise((resolve, reject) => {
-    let temp = 150;
-    let temperatureProcess = spawn('python3', ['temperature.py']);
+    let temp = null;
+    let errorOutput = '';
+    let timeoutHandle;
+    
+    const temperatureProcess = spawn('python3', ['temperature.py']);
+    
+    // Set timeout for temperature reading
+    timeoutHandle = setTimeout(() => {
+      temperatureProcess.kill();
+      console.error('ERROR: Temperature read timeout after 5 seconds');
+      reject(new Error('Temperature read timeout'));
+    }, TEMP_READ_TIMEOUT);
+    
     temperatureProcess.stdout.on('data', (data) => {
       temp = data.toString().trim();
     });
+    
+    temperatureProcess.stderr.on('data', (data) => {
+      errorOutput += data.toString();
+    });
+    
     temperatureProcess.on('close', function(code) {
-      return callback(temp);
+      clearTimeout(timeoutHandle);
+      
+      // Check exit code
+      if (code !== 0) {
+        console.error(`ERROR: Temperature script exited with code ${code}`);
+        if (errorOutput) {
+          console.error(`Temperature script error: ${errorOutput}`);
+        }
+        consecutiveFailures++;
+        
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          console.error(`CRITICAL: ${MAX_CONSECUTIVE_FAILURES} consecutive temperature read failures. Shutting down heater for safety.`);
+          boiler.pwmWrite(0); // Turn off heater for safety
+          reject(new Error('Too many consecutive temperature read failures'));
+          return;
+        }
+        
+        reject(new Error(`Temperature read failed with exit code ${code}`));
+        return;
+      }
+      
+      // Validate temperature
+      const temperature = parseFloat(temp);
+      if (isNaN(temperature)) {
+        console.error(`ERROR: Invalid temperature value: ${temp}`);
+        consecutiveFailures++;
+        reject(new Error('Invalid temperature value'));
+        return;
+      }
+      
+      if (temperature < MIN_TEMP || temperature > MAX_TEMP) {
+        console.error(`ERROR: Temperature ${temperature}°C out of valid range (${MIN_TEMP}-${MAX_TEMP}°C)`);
+        consecutiveFailures++;
+        reject(new Error('Temperature out of valid range'));
+        return;
+      }
+      
+      // Success - reset failure counter
+      consecutiveFailures = 0;
+      lastValidTemperature = temperature;
+      callback(temperature);
+      resolve(temperature);
+    });
+    
+    temperatureProcess.on('error', (err) => {
+      clearTimeout(timeoutHandle);
+      console.error(`ERROR: Failed to spawn temperature process: ${err}`);
+      consecutiveFailures++;
+      reject(err);
     });
   });
 }
