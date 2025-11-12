@@ -168,46 +168,333 @@ app.get('/api/pid/set/:p-:i-:d', (req, res) => {
   }
 });
 
-function emitToSockets(){
-  read(600).then(function(response){
-    io.emit('temp_refresh', response);
-  })
-  setTimeout(emitToSockets, 3000);
+// Mode management
+let currentMode = 'espresso';
+let steamTimer = null;
+const STEAM_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes default
+
+// Helper function to set mode
+function setMode(mode, duration = null) {
+  const modes = {
+    espresso: { temp: 100, name: 'Espresso' },
+    steam: { temp: 140, name: 'Steam' },
+    off: { temp: 0, name: 'Off' }
+  };
+  
+  if (!modes[mode]) {
+    throw new Error('Invalid mode');
+  }
+  
+  const modeConfig = modes[mode];
+  
+  // Update temperature
+  const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+  config.target_temperature = modeConfig.temp;
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+  
+  currentMode = mode;
+  
+  // Clear any existing steam timer
+  if (steamTimer) {
+    clearTimeout(steamTimer);
+    steamTimer = null;
+  }
+  
+  // Set timer for steam mode
+  if (mode === 'steam') {
+    const timeoutMs = duration ? duration * 1000 : STEAM_TIMEOUT_MS;
+    console.log(`Steam mode activated, will auto-switch to espresso in ${timeoutMs / 1000}s`);
+    
+    steamTimer = setTimeout(() => {
+      console.log('Steam timeout reached, switching to espresso mode');
+      setMode('espresso');
+      // Emit event to connected clients
+      io.emit('mode_change', { mode: 'espresso', reason: 'steam_timeout' });
+    }, timeoutMs);
+  }
+  
+  console.log(`Mode changed to: ${modeConfig.name} (${modeConfig.temp}°C)`);
+  return modeConfig;
 }
 
-emitToSockets();
+// API endpoint to set mode to espresso
+app.get('/api/mode/espresso', (req, res) => {
+  try {
+    const modeConfig = setMode('espresso');
+    res.json({
+      success: true,
+      mode: 'espresso',
+      temperature: modeConfig.temp,
+      message: 'Switched to espresso mode'
+    });
+  } catch (err) {
+    console.error('Failed to set espresso mode:', err);
+    res.status(500).json({
+      error: 'Failed to set mode',
+      message: err.message
+    });
+  }
+});
+
+// API endpoint to set mode to steam (with optional duration in seconds)
+app.get('/api/mode/steam/:duration?', (req, res) => {
+  try {
+    const duration = req.params.duration ? parseInt(req.params.duration) : null;
+    
+    // Validate duration if provided
+    if (duration !== null && (isNaN(duration) || duration < 10 || duration > 600)) {
+      return res.status(400).json({
+        error: 'Invalid duration',
+        message: 'Duration must be between 10 and 600 seconds (10min max)'
+      });
+    }
+    
+    const modeConfig = setMode('steam', duration);
+    const timeoutSeconds = duration || (STEAM_TIMEOUT_MS / 1000);
+    
+    res.json({
+      success: true,
+      mode: 'steam',
+      temperature: modeConfig.temp,
+      timeout_seconds: timeoutSeconds,
+      message: `Switched to steam mode, will auto-switch to espresso in ${timeoutSeconds}s`
+    });
+  } catch (err) {
+    console.error('Failed to set steam mode:', err);
+    res.status(500).json({
+      error: 'Failed to set mode',
+      message: err.message
+    });
+  }
+});
+
+// API endpoint to turn off
+app.get('/api/mode/off', (req, res) => {
+  try {
+    const modeConfig = setMode('off');
+    res.json({
+      success: true,
+      mode: 'off',
+      temperature: modeConfig.temp,
+      message: 'Machine turned off'
+    });
+  } catch (err) {
+    console.error('Failed to turn off:', err);
+    res.status(500).json({
+      error: 'Failed to set mode',
+      message: err.message
+    });
+  }
+});
+
+// API endpoint to get current mode
+app.get('/api/mode', (req, res) => {
+  try {
+    const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    const steamTimeRemaining = steamTimer ? Math.ceil((steamTimer._idleStart + steamTimer._idleTimeout - Date.now()) / 1000) : null;
+    
+    res.json({
+      mode: currentMode,
+      target_temperature: config.target_temperature,
+      steam_time_remaining: steamTimeRemaining
+    });
+  } catch (err) {
+    console.error('Failed to get mode:', err);
+    res.status(500).json({
+      error: 'Failed to get mode',
+      message: err.message
+    });
+  }
+});
+
+// Health check endpoint
+let lastTemperatureUpdate = Date.now();
+let healthStatus = {
+  status: 'starting',
+  lastCheck: Date.now()
+};
+
+// Update health status when temperature readings succeed
+function updateHealthStatus(healthy, reason = null) {
+  if (healthy) {
+    healthStatus = {
+      status: 'healthy',
+      lastCheck: Date.now(),
+      lastTemperatureUpdate: lastTemperatureUpdate
+    };
+  } else {
+    healthStatus = {
+      status: 'unhealthy',
+      lastCheck: Date.now(),
+      reason: reason,
+      lastTemperatureUpdate: lastTemperatureUpdate
+    };
+  }
+}
+
+app.get('/health', (req, res) => {
+  try {
+    const uptime = process.uptime();
+    const now = Date.now();
+    const timeSinceLastTemp = now - lastTemperatureUpdate;
+    
+    // Check if MongoDB is connected
+    let mongoHealthy = false;
+    try {
+      mongoHealthy = client && client.topology && client.topology.isConnected();
+    } catch (e) {
+      mongoHealthy = false;
+    }
+    
+    // Consider unhealthy if no temperature update in 30 seconds
+    const tempHealthy = timeSinceLastTemp < 30000;
+    
+    // Overall health
+    const isHealthy = mongoHealthy && tempHealthy;
+    
+    const health = {
+      status: isHealthy ? 'healthy' : 'unhealthy',
+      timestamp: new Date().toISOString(),
+      uptime: Math.floor(uptime),
+      checks: {
+        mongodb: {
+          status: mongoHealthy ? 'healthy' : 'unhealthy',
+          connected: mongoHealthy
+        },
+        temperature_readings: {
+          status: tempHealthy ? 'healthy' : 'unhealthy',
+          last_update_seconds_ago: Math.floor(timeSinceLastTemp / 1000),
+          threshold_seconds: 30
+        },
+        web_server: {
+          status: 'healthy',
+          port: USE_SSL ? HTTPS_PORT : HTTP_PORT,
+          ssl: USE_SSL
+        }
+      },
+      details: {
+        mode: currentMode,
+        steam_timer_active: steamTimer !== null,
+        connected_clients: io ? io.engine.clientsCount : 0
+      }
+    };
+    
+    // Return 503 if unhealthy, 200 if healthy
+    const statusCode = isHealthy ? 200 : 503;
+    res.status(statusCode).json(health);
+    
+  } catch (err) {
+    console.error('Health check error:', err);
+    res.status(503).json({
+      status: 'unhealthy',
+      error: err.message
+    });
+  }
+});
+
+// Track temperature updates for health check
+function recordTemperatureUpdate() {
+  lastTemperatureUpdate = Date.now();
+}
+
+// Track last broadcast time for incremental updates
+let lastBroadcastTime = Date.now();
+
+// WebSocket connection handling
+io.on('connection', (socket) => {
+  console.log('Client connected:', socket.id);
+  
+  // Send full history on initial connection
+  read(600).then(data => {
+    socket.emit('temp_history', data);
+    console.log(`Sent ${data.length} historical records to client ${socket.id}`);
+  }).catch(err => {
+    console.error('Error sending history:', err);
+  });
+  
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
+  });
+  
+  socket.on('error', (err) => {
+    console.error('Socket error:', err);
+  });
+});
+
+// Broadcast only new temperature readings
+async function broadcastNewReadings() {
+  // Skip if no clients connected
+  if (io.engine.clientsCount === 0) {
+    return;
+  }
+  
+  try {
+    const newReadings = await getNewReadings(lastBroadcastTime);
+    
+    if (newReadings.length > 0) {
+      io.emit('temp_update', newReadings);
+      lastBroadcastTime = Date.now();
+      recordTemperatureUpdate(); // Update health check timestamp
+      console.log(`Broadcasted ${newReadings.length} new reading(s) to ${io.engine.clientsCount} client(s)`);
+    }
+  } catch (err) {
+    console.error('Error broadcasting readings:', err);
+  }
+}
+
+// Get new readings since last broadcast
+async function getNewReadings(since) {
+  try {
+    const database = client.db('pid');
+    const collection = database.collection('temperatures');
+    
+    const query = { timestamp: { $gt: since } };
+    const options = {
+      sort: { timestamp: 1 }, // Ascending order for new readings
+      projection: { _id: 0 }
+    };
+    
+    const cursor = collection.find(query, options);
+    const result = await cursor.toArray();
+    
+    return result;
+  } catch (err) {
+    console.error('Error getting new readings:', err);
+    return [];
+  }
+}
+
+// Get historical readings
 async function read(limit) {
-  let result;
   try {
     const database = client.db('pid');
     const collection = database.collection('temperatures');
 
-    // ten minutes in milliseconds
-    const query = {'timestamp': {$gt: Date.now() - 3600000}};
+    // Last hour of data
+    const query = { timestamp: { $gt: Date.now() - 3600000 } };
 
     const options = {
-      // sort returned documents in reverse timestamp order (most recent first)
-      sort: {timestamp: -1},
-      // only give us the limited number
+      sort: { timestamp: -1 }, // Most recent first
       limit: limit,
-      // Don't include the _id field
-      projection: {_id: 0},
+      projection: { _id: 0 }
     };
 
-    const cursor = await collection.find(query, options);
-
-    // print a message if no documents were found
-    if ((await cursor.count()) === 0) {
+    const cursor = collection.find(query, options);
+    const count = await collection.countDocuments(query);
+    
+    if (count === 0) {
       console.log('No documents found!');
+      return [];
     }
 
-    result = await cursor.toArray();
+    const result = await cursor.toArray();
+    return result.reverse(); // Reverse to get chronological order
 
   } catch (err) {
-    console.log(err);
-  } finally {
-
+    console.error('Error reading from database:', err);
+    return [];
   }
-
-  return result;
 }
+
+// Start broadcasting new readings every second
+setInterval(broadcastNewReadings, 1000);

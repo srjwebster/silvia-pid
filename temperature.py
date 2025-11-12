@@ -4,7 +4,7 @@ import mcp9600
 
 # Temperature validation constants
 MIN_TEMP = 0.0
-MAX_TEMP = 200.0
+MAX_TEMP_READING = 200.0  # Maximum valid thermocouple reading
 
 try:
     # Initialize MCP9600 thermocouple at I2C address 0x60
@@ -15,8 +15,8 @@ try:
     temperature = sensor.get_hot_junction_temperature()
     
     # Validate temperature is within reasonable range for coffee machine
-    if temperature < MIN_TEMP or temperature > MAX_TEMP:
-        print(f"ERROR: Temperature {temperature}°C out of valid range ({MIN_TEMP}-{MAX_TEMP}°C)", file=sys.stderr)
+    if temperature < MIN_TEMP or temperature > MAX_TEMP_READING:
+        print(f"ERROR: Temperature {temperature}°C out of valid range ({MIN_TEMP}-{MAX_TEMP_READING}°C)", file=sys.stderr)
         sys.exit(2)  # Exit code 2 = invalid temperature reading
     
     # Output temperature to stdout
