@@ -602,15 +602,21 @@
             }
 
             initWebSocket() {
-                this.socket = io.connect();
+                // Socket.IO v4.x - use io() instead of io.connect()
+                this.socket = io({
+                    reconnection: true,
+                    reconnectionDelay: 1000,
+                    reconnectionDelayMax: 5000,
+                    reconnectionAttempts: Infinity
+                });
                 
                 this.socket.on('connect', () => {
                     console.log('Connected to server');
                     this.updateStatus(true);
                 });
 
-                this.socket.on('disconnect', () => {
-                    console.log('Disconnected from server');
+                this.socket.on('disconnect', (reason) => {
+                    console.log('Disconnected from server:', reason);
                     this.updateStatus(false);
                 });
 

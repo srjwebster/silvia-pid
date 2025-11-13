@@ -1,5 +1,5 @@
 # Dockerfile for Silvia PID Node.js Application
-FROM node:18-bookworm
+FROM node:24-bookworm
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \

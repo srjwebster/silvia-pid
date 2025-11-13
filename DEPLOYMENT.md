@@ -78,11 +78,28 @@ sudo raspi-config
 sudo reboot
 ```
 
+**Important:** I2C device tree overlay changes require a reboot to take effect. After enabling I2C, you must reboot before the `/dev/i2c-1` device will appear.
+
 3. Verify I2C is working:
 ```bash
+# Check I2C modules are loaded
+lsmod | grep i2c
+# Should see: i2c_bcm2711 (Pi 4/5) or i2c_bcm2835 (Pi 3), and i2c_dev
+
+# Check I2C device exists
+ls -l /dev/i2c-1
+# Should show: crw-rw---- 1 root i2c 89, 1 /dev/i2c-1
+
+# Scan for I2C devices
 sudo i2cdetect -y 1
-# Should show device at address 0x60
+# Should show device at address 0x60 (MCP9600)
 ```
+
+**If /dev/i2c-1 is missing:**
+- I2C may not be enabled (check config.txt)
+- I2C modules may not be loaded (run: `sudo modprobe i2c-bcm2711 i2c-dev` for Pi 4/5, or `sudo modprobe i2c-bcm2835 i2c-dev` for Pi 3)
+- Reboot may be required if I2C was just enabled
+- Run diagnostic script: `sudo bash scripts/diagnose-i2c.sh`
 
 ## Installation
 

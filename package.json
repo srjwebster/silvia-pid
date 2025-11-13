@@ -10,14 +10,12 @@
   "author": "srjwebster",
   "license": "ISC",
   "dependencies": {
-    "express": "^4.17.1",
-    "socket.io": "^2.3.0",
-    "pigpio": "^3.2.3",
     "cors": "^2.8.5",
+    "express": "^4.21.2",
     "liquid-pid": "^1.0.0",
-    "mongodb": "^3.6.2"
-  },
-  "devDependencies": {
+    "mongodb": "^6.21.0",
+    "pigpio": "^3.2.3",
+    "socket.io": "^4.8.1"
   },
   "nothing": {
     "max31855": "github:maugdog/max31855"

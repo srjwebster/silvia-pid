@@ -61,7 +61,14 @@ if (USE_SSL) {
   });
 }
 
-io = require('socket.io').listen(server);
+// Initialize Socket.IO v4.x server
+const { Server } = require('socket.io');
+io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
 
 const client = new MongoClient(MONGODB_URL, {useUnifiedTopology: true});
 client.connect().then(() => {
@@ -375,7 +382,7 @@ app.get('/health', (req, res) => {
       details: {
         mode: currentMode,
         steam_timer_active: steamTimer !== null,
-        connected_clients: io ? io.engine.clientsCount : 0
+        connected_clients: io ? io.sockets.sockets.size : 0
       }
     };
     
@@ -423,8 +430,9 @@ io.on('connection', (socket) => {
 
 // Broadcast only new temperature readings
 async function broadcastNewReadings() {
-  // Skip if no clients connected
-  if (io.engine.clientsCount === 0) {
+  // Skip if no clients connected (Socket.IO v4.x API)
+  const connectedClients = io.sockets.sockets.size;
+  if (connectedClients === 0) {
     return;
   }
   
@@ -435,7 +443,7 @@ async function broadcastNewReadings() {
       io.emit('temp_update', newReadings);
       lastBroadcastTime = Date.now();
       recordTemperatureUpdate(); // Update health check timestamp
-      console.log(`Broadcasted ${newReadings.length} new reading(s) to ${io.engine.clientsCount} client(s)`);
+      console.log(`Broadcasted ${newReadings.length} new reading(s) to ${connectedClients} client(s)`);
     }
   } catch (err) {
     console.error('Error broadcasting readings:', err);

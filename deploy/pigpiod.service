@@ -1,0 +1,16 @@
+[Unit]
+Description=Daemon required to control GPIO pins via /dev/gpiomem
+After=network.target
+
+[Service]
+Type=forking
+# pigpiod installs to /usr/local/bin/pigpiod when compiled from source
+ExecStart=/usr/local/bin/pigpiod
+ExecStop=/bin/kill -s TERM $MAINPID
+PIDFile=/var/run/pigpiod.pid
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
