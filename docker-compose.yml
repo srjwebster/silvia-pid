@@ -1,9 +1,29 @@
-version: '3.8'
-
 services:
+  # pigpiod daemon service (required for GPIO control)
+  # Using docker-alpine-pigpiod image - runs pigpiod in a container
+  # The Node.js pigpio library will connect to this daemon on port 8888
+  pigpiod:
+    image: zinen2/alpine-pigpiod:latest
+    container_name: silvia-pigpiod
+    restart: unless-stopped
+    privileged: true  # Required for GPIO access
+    network_mode: host  # Expose pigpiod on host network
+    # Alternative: use device mapping instead of privileged
+    # devices:
+    #   - /dev/gpiomem:/dev/gpiomem
+    #   - /dev/gpiochip0:/dev/gpiochip0
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8888"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   # MongoDB database service
+  # Using mongo:4.4.18 for Raspberry Pi 3 compatibility (ARMv8-A)
+  # MongoDB 7.0+ requires ARMv8.2-A which Pi 3 doesn't have
   mongodb:
-    image: mongo:7.0
+    image: mongo:4.4.18
     container_name: silvia-mongodb
     restart: unless-stopped
     environment:
@@ -11,10 +31,13 @@ services:
     volumes:
       - mongodb_data:/data/db
       - mongodb_config:/data/configdb
+    ports:
+      - "27017:27017"  # Expose to host for silvia-pid container (uses network_mode: host)
     networks:
       - silvia-network
     healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      # MongoDB 4.4 uses mongo shell, not mongosh
+      test: echo 'db.runCommand("ping").ok' | mongo localhost:27017/test --quiet
       interval: 10s
       timeout: 5s
       retries: 5
@@ -25,38 +48,45 @@ services:
     build: .
     container_name: silvia-pid-app
     restart: unless-stopped
-    privileged: true  # Required for GPIO access
+    privileged: true  # Required for GPIO device access (pigpio library checks permissions)
+    network_mode: host  # Required to access pigpiod daemon on localhost:8888
     depends_on:
+      pigpiod:
+        condition: service_healthy
       mongodb:
         condition: service_healthy
     environment:
-      - MONGODB_URL=mongodb://mongodb:27017
+      - MONGODB_URL=mongodb://localhost:27017  # Use localhost since we're on host network
       - USE_SSL=${USE_SSL:-false}
       - SSL_KEY_PATH=${SSL_KEY_PATH:-}
       - SSL_CERT_PATH=${SSL_CERT_PATH:-}
       - HTTP_PORT=${HTTP_PORT:-80}
       - HTTPS_PORT=${HTTPS_PORT:-443}
-    ports:
-      - "${HTTP_PORT:-80}:${HTTP_PORT:-80}"
-      - "${HTTPS_PORT:-443}:${HTTPS_PORT:-443}"
+      - DEBUG=${DEBUG:-false}  # Enable verbose logging (default: false to reduce SD card wear)
+      - API_KEY=${API_KEY:-}  # API key for write operations (leave empty to disable auth)
+    # pigpio library will automatically connect to pigpiod on localhost:8888
+    # when direct GPIO access fails (which it will in Docker)
+    # ports not needed with network_mode: host (container uses host's network directly)
     volumes:
       # Configuration files (frequently updated) - mounted for instant updates
       - ./config.json:/app/config.json
       - ./index.html:/app/index.html
       
-      # Application code (pid-process.js, web-server.js, temperature.py)
-      # stays in the Docker image - requires rebuild to update
+      # Application code - mounted for development/iterative testing
+      # Remove these mounts in production if you want code baked into image
+      - ./pid-process.js:/app/pid-process.js
+      - ./web-server.js:/app/web-server.js
+      - ./temperature.py:/app/temperature.py
       
       # Data and logs
       - silvia_logs:/var/log/silvia-pid
       - /etc/letsencrypt:/etc/letsencrypt:ro  # SSL certificates (if using)
     devices:
-      - /dev/gpiomem:/dev/gpiomem  # GPIO access for relay control
       - /dev/i2c-1:/dev/i2c-1      # I2C access for MCP9600 thermocouple
-    networks:
-      - silvia-network
+      - /dev/gpiomem:/dev/gpiomem   # Required for pigpio library permission check (even though we use daemon)
+    # networks not needed with network_mode: host
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:${HTTP_PORT:-80}/', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));"]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:${HTTP_PORT:-80}/health', (res) => { process.exit(res.statusCode === 200 || res.statusCode === 503 ? 0 : 1); }).on('error', () => process.exit(1));"]
       interval: 30s
       timeout: 10s
       retries: 3

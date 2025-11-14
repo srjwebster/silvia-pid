@@ -56,11 +56,24 @@ fi
 # Stop services using port 80
 echo ""
 echo "Step 3: Stopping services on port 80..."
-if docker compose -f /opt/silvia-pid/docker-compose.yml ps | grep -q silvia-pid; then
+if docker compose -f /opt/silvia-pid/docker-compose.yml ps 2>/dev/null | grep -q "silvia-pid.*Up"; then
     echo "  Stopping silvia-pid container..."
     docker compose -f /opt/silvia-pid/docker-compose.yml stop silvia-pid
+    echo "  Waiting for port 80 to be free..."
+    sleep 3
 else
-    echo "  No running services found"
+    echo "  No running services found on port 80"
+fi
+
+# Check if port 80 is actually free
+if command -v lsof &> /dev/null && lsof -i :80 > /dev/null 2>&1; then
+    echo "  WARNING: Port 80 is still in use!"
+    echo "  Please stop any other services using port 80 before continuing"
+    read -p "Continue anyway? (y/n) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
 fi
 
 # Obtain certificate
@@ -101,8 +114,8 @@ SSL_CERT_PATH=/etc/letsencrypt/live/$DOMAIN/fullchain.pem
 HTTP_PORT=80
 HTTPS_PORT=443
 
-# MongoDB Configuration
-MONGODB_URL=mongodb://mongodb:27017
+# MongoDB Configuration (using localhost since silvia-pid uses network_mode: host)
+MONGODB_URL=mongodb://localhost:27017
 EOF
 
 echo "  .env file created"
@@ -153,10 +166,11 @@ sleep 10
 # Test HTTPS
 echo ""
 echo "Step 9: Testing HTTPS connection..."
-if curl -f -s -k https://localhost:443 > /dev/null 2>&1; then
+if curl -f -s https://localhost/health > /dev/null 2>&1; then
     echo "  HTTPS test: PASSED ✓"
 else
     echo "  HTTPS test: FAILED (service may still be starting)"
+    echo "  Note: If using network_mode: host, test with: curl https://localhost/health"
 fi
 
 # Summary

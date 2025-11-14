@@ -3,11 +3,11 @@ Description=Daemon required to control GPIO pins via /dev/gpiomem
 After=network.target
 
 [Service]
-Type=forking
+Type=simple
 # pigpiod installs to /usr/local/bin/pigpiod when compiled from source
+# Note: pigpiod doesn't fork or create PID file, so Type=simple (not forking)
 ExecStart=/usr/local/bin/pigpiod
-ExecStop=/bin/kill -s TERM $MAINPID
-PIDFile=/var/run/pigpiod.pid
+ExecStop=/bin/killall pigpiod
 Restart=on-failure
 RestartSec=5
 

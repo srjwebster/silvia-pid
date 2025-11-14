@@ -10,8 +10,8 @@ RemainAfterExit=yes
 WorkingDirectory=/opt/silvia-pid
 EnvironmentFile=-/opt/silvia-pid/.env
 
-# Start command
-ExecStart=/usr/bin/docker compose up -d
+# Start command - start containers (health checks may take time, but containers will start)
+ExecStart=/usr/bin/docker compose -f /opt/silvia-pid/docker-compose.yml up -d
 
 # Stop command
 ExecStop=/usr/bin/docker compose down

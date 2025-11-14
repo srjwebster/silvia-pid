@@ -126,93 +126,151 @@ GET /api/mode
 
 ---
 
-### Option 2: Home Assistant (Recommended)
+### Option 2: Home Assistant with Google Assistant (Full Integration - Recommended)
+
+**Why Home Assistant:**
+- Native Google Assistant integration (no IFTTT needed)
+- Exposes your coffee machine as a smart device in Google Home
+- Works with your existing HTTPS endpoint
+- Supports status queries ("Is my coffee machine ready?")
+- Can run on the same Pi or separate device
 
 **Setup:**
 
-1. **Install Home Assistant** (can run on same Pi):
+#### Step 1: Install Home Assistant
+
+**Option A: Docker (Easiest - Recommended)**
 ```bash
-# Install Home Assistant Core
-sudo apt-get install python3-dev python3-venv
-sudo useradd -rm homeassistant
-cd /srv
-sudo mkdir homeassistant
-sudo chown homeassistant:homeassistant homeassistant
-sudo -u homeassistant -H -s
-cd /srv/homeassistant
-python3 -m venv .
-source bin/activate
-pip3 install homeassistant
+# On your Raspberry Pi (or another device)
+cd /opt
+sudo docker run -d \
+  --name homeassistant \
+  --privileged \
+  --restart unless-stopped \
+  -e TZ=America/New_York \
+  -v /opt/homeassistant:/config \
+  --network=host \
+  ghcr.io/home-assistant/home-assistant:stable
 ```
 
-2. **Configure Home Assistant** (`configuration.yaml`):
+**Option B: Home Assistant OS (Full featured)**
+- Install on separate device or VM
+- Download from: https://www.home-assistant.io/installation/
+
+#### Step 2: Configure Home Assistant
+
+Edit `/opt/homeassistant/configuration.yaml`:
 
 ```yaml
-# REST Commands
+# REST Commands for Silvia PID
 rest_command:
-  coffee_espresso:
-    url: "http://192.168.1.100/api/mode/espresso"
-    method: get
+  silvia_espresso:
+    url: "https://coffee.srjwebster.com/api/mode/espresso"
+    method: GET
+    verify_ssl: true
   
-  coffee_steam:
-    url: "http://192.168.1.100/api/mode/steam/180"  # 3 minutes
-    method: get
+  silvia_steam:
+    url: "https://coffee.srjwebster.com/api/mode/steam/180"  # 3 minutes default
+    method: GET
+    verify_ssl: true
   
-  coffee_off:
-    url: "http://192.168.1.100/api/mode/off"
-    method: get
+  silvia_steam_short:
+    url: "https://coffee.srjwebster.com/api/mode/steam/120"  # 2 minutes
+    method: GET
+    verify_ssl: true
+  
+  silvia_off:
+    url: "https://coffee.srjwebster.com/api/mode/off"
+    method: GET
+    verify_ssl: true
 
-# Template Switches (appear as devices)
+# Template Switches (exposed to Google Assistant)
 switch:
   - platform: template
     switches:
-      silvia_espresso:
-        friendly_name: "Silvia Espresso"
+      silvia_espresso_mode:
+        friendly_name: "Coffee Machine - Espresso"
+        value_template: "{{ states('sensor.silvia_mode') == 'espresso' }}"
         turn_on:
-          service: rest_command.coffee_espresso
+          service: rest_command.silvia_espresso
         turn_off:
-          service: rest_command.coffee_off
+          service: rest_command.silvia_off
         icon_template: mdi:coffee
-      
-      silvia_steam:
-        friendly_name: "Silvia Steam"
+        
+      silvia_steam_mode:
+        friendly_name: "Coffee Machine - Steam"
+        value_template: "{{ states('sensor.silvia_mode') == 'steam' }}"
         turn_on:
-          service: rest_command.coffee_steam
+          service: rest_command.silvia_steam
         turn_off:
-          service: rest_command.coffee_espresso
+          service: rest_command.silvia_espresso
         icon_template: mdi:kettle-steam
 
-# Sensors for monitoring
+# Sensors for status
 sensor:
   - platform: rest
     name: "Silvia Mode"
-    resource: "http://192.168.1.100/api/mode"
+    resource: "https://coffee.srjwebster.com/api/mode"
     method: GET
+    verify_ssl: true
     value_template: "{{ value_json.mode }}"
     scan_interval: 10
+    json_attributes:
+      - target_temperature
+      - steam_time_remaining
   
   - platform: rest
     name: "Silvia Temperature"
-    resource: "http://192.168.1.100/api/mode"
+    resource: "https://coffee.srjwebster.com/api/mode"
     method: GET
+    verify_ssl: true
     value_template: "{{ value_json.target_temperature }}"
     unit_of_measurement: "°C"
     scan_interval: 10
 ```
 
-3. **Enable Google Assistant Integration:**
-   - Settings → Integrations → Add Google Assistant
-   - Follow OAuth setup
-   - Expose switches to Google Home
+#### Step 3: Enable Google Assistant Integration
 
-4. **Voice Commands:**
-   - "Hey Google, turn on Silvia Espresso"
-   - "Hey Google, turn on Silvia Steam"
-   - "Hey Google, turn off Silvia Steam" (switches to espresso)
-   - "Hey Google, is Silvia Steam on?"
+1. **In Home Assistant UI:**
+   - Go to Settings → Integrations
+   - Click "+" → Search "Google Assistant"
+   - Click "Google Assistant"
 
-**Pros:** ✅ Local network, fast, powerful automation  
-**Cons:** ❌ Requires Home Assistant setup
+2. **Choose Integration Method:**
+   - **Option A: Home Assistant Cloud (Easiest - $5/month)**
+     - Subscribe to Nabu Casa (supports Home Assistant development)
+     - Automatic Google Assistant integration
+     - No port forwarding needed
+   
+   - **Option B: Manual Setup (Free)**
+     - Follow: https://www.home-assistant.io/integrations/google_assistant/
+     - Requires OAuth setup with Google
+     - More complex but free
+
+3. **Expose Devices:**
+   - In Google Assistant settings, select which switches to expose
+   - Enable: `silvia_espresso_mode` and `silvia_steam_mode`
+   - Give them friendly names: "Coffee Machine Espresso" and "Coffee Machine Steam"
+
+#### Step 4: Link to Google Home
+
+1. Open Google Home app on your phone
+2. Add device → Works with Google
+3. Search for "Home Assistant"
+4. Sign in and authorize
+5. Your coffee machine switches will appear!
+
+#### Step 5: Voice Commands
+
+Once linked, you can say:
+- **"Hey Google, turn on Coffee Machine Espresso"**
+- **"Hey Google, turn on Coffee Machine Steam"**
+- **"Hey Google, turn off Coffee Machine Steam"** (switches to espresso)
+- **"Hey Google, is Coffee Machine Steam on?"**
+- **"Hey Google, what's the temperature of the coffee machine?"**
+
+**Pros:** ✅ Native Google integration, status queries, fast, powerful automation  
+**Cons:** ❌ Requires Home Assistant setup (but worth it!)
 
 ---
 

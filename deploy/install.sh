@@ -3,6 +3,7 @@ set -e
 
 # Silvia PID Installation Script
 # This script installs the Silvia PID controller with Docker Compose on Raspberry Pi
+# Optimized for low power consumption to prevent undervoltage during installation
 
 echo "=== Silvia PID Installation Script ==="
 echo ""
@@ -23,17 +24,108 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# Get script directory for helper scripts
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Function to check power status (called once at start)
+# Returns 0 if power is OK, 1 if power issues detected
+check_power_once() {
+    POWER_ISSUE=0
+    if command -v vcgencmd &> /dev/null; then
+        THROTTLED=$(vcgencmd get_throttled | cut -d= -f2)
+        if [ "$THROTTLED" != "0x0" ] && [ "$THROTTLED" != "0x50000" ]; then
+            echo "⚠ WARNING: Power supply issue detected (throttled=$THROTTLED)"
+            echo "   Docker installation may fail or cause reboots!"
+            echo "   Use official Raspberry Pi power supply (5V, 2.5A+)"
+            read -p "Continue anyway? (y/N) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                exit 1
+            fi
+            POWER_ISSUE=1
+        else
+            echo "✓ Power supply OK (throttled=$THROTTLED)"
+        fi
+    else
+        echo "⚠ vcgencmd not available, skipping power check"
+    fi
+    return $POWER_ISSUE
+}
+
+# Function to reduce CPU governor (conservative mode = lower power draw)
+set_cpu_conservative() {
+    if [ -d /sys/devices/system/cpu/cpu0/cpufreq ]; then
+        for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+            if [ -f "$cpu" ]; then
+                echo "conservative" > "$cpu" 2>/dev/null || true
+            fi
+        done
+        echo "✓ Set CPU governor to conservative (lower power draw)"
+    fi
+}
+
+# Function to restore CPU governor
+restore_cpu_governor() {
+    if [ -d /sys/devices/system/cpu/cpu0/cpufreq ]; then
+        for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+            if [ -f "$cpu" ]; then
+                echo "ondemand" > "$cpu" 2>/dev/null || true
+            fi
+        done
+    fi
+}
+
+# Check power once at start
+echo "Checking power supply status..."
+check_power_once
+POWER_ISSUE=$?
+
+# Only apply power-saving measures if power issues detected
+if [ $POWER_ISSUE -eq 1 ]; then
+    echo "⚠ Power issues detected - enabling power-saving mode (slower but safer)"
+    set_cpu_conservative
+    trap restore_cpu_governor EXIT  # Restore on exit
+    LOW_POWER_MODE=1
+else
+    echo "✓ Power supply good - running at full speed"
+    LOW_POWER_MODE=0
+fi
+
+echo ""
 echo "Step 1: Updating system packages..."
 apt-get update
+if [ $LOW_POWER_MODE -eq 1 ]; then
+    echo "✓ Package list updated, waiting 5s before upgrade (power-saving mode)..."
+    sleep 5  # Brief pause to reduce peak load
+else
+    echo "✓ Package list updated"
+fi
 apt-get upgrade -y
+echo "✓ System packages updated"
+if [ $LOW_POWER_MODE -eq 1 ]; then
+    sleep 2  # Brief pause after upgrade
+fi
 
 echo ""
 echo "Step 2: Installing Docker..."
 if ! command -v docker &> /dev/null; then
     # Install Docker using the official script
+    echo "Downloading Docker installation script..."
     curl -fsSL https://get.docker.com -o get-docker.sh
+    if [ $LOW_POWER_MODE -eq 1 ]; then
+        echo "✓ Docker script downloaded, waiting 3s before installation (power-saving mode)..."
+        sleep 3  # Brief pause to reduce peak load
+    else
+        echo "✓ Docker script downloaded"
+    fi
+    echo "Installing Docker (this may take several minutes)..."
     sh get-docker.sh
+    echo "✓ Docker installed"
     rm get-docker.sh
+    if [ $LOW_POWER_MODE -eq 1 ]; then
+        sleep 2  # Brief pause after installation
+    fi
     
     # Add current user to docker group (if not root)
     if [ -n "$SUDO_USER" ]; then
@@ -48,6 +140,10 @@ echo ""
 echo "Step 3: Installing Docker Compose..."
 if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
     apt-get install -y docker-compose-plugin
+    echo "✓ Docker Compose installed"
+    if [ $LOW_POWER_MODE -eq 1 ]; then
+        sleep 2  # Brief pause after installation
+    fi
 else
     echo "Docker Compose already installed"
 fi
@@ -63,7 +159,41 @@ else
 fi
 
 echo ""
-echo "Step 4: Enabling I2C..."
+echo "Step 4: Configuring boot settings for headless operation..."
+# Determine config.txt location
+CONFIG_FILE=""
+if [ -f /boot/firmware/config.txt ]; then
+    CONFIG_FILE="/boot/firmware/config.txt"
+elif [ -f /boot/config.txt ]; then
+    CONFIG_FILE="/boot/config.txt"
+fi
+
+if [ -n "$CONFIG_FILE" ]; then
+    # Disable DRM/KMS overlay (conflicts with pigpiod mailbox access)
+    if grep -q "^dtoverlay=vc4-kms-v3d" "$CONFIG_FILE"; then
+        echo "Disabling DRM overlay (vc4-kms-v3d) for pigpiod compatibility..."
+        sed -i 's/^dtoverlay=vc4-kms-v3d/#dtoverlay=vc4-kms-v3d  # Disabled for pigpiod compatibility/' "$CONFIG_FILE"
+        echo "✓ DRM overlay disabled"
+        REBOOT_NEEDED=1
+    elif ! grep -q "^#dtoverlay=vc4-kms-v3d" "$CONFIG_FILE"; then
+        echo "✓ DRM overlay already disabled or not present"
+    fi
+    
+    # Ensure GPU memory is allocated (required for pigpiod)
+    if ! grep -q "^gpu_mem=" "$CONFIG_FILE"; then
+        echo "Setting GPU memory to 64MB (required for pigpiod)..."
+        echo "gpu_mem=64" >> "$CONFIG_FILE"
+        echo "✓ GPU memory set to 64MB"
+        REBOOT_NEEDED=1
+    else
+        echo "✓ GPU memory already configured"
+    fi
+else
+    echo "⚠ Could not find config.txt, skipping boot configuration"
+fi
+
+echo ""
+echo "Step 5: Enabling I2C..."
 # Enable I2C in /boot/config.txt if not already enabled
 if ! grep -q "^dtparam=i2c_arm=on" /boot/firmware/config.txt 2>/dev/null && \
    ! grep -q "^dtparam=i2c_arm=on" /boot/config.txt 2>/dev/null; then
@@ -79,7 +209,8 @@ fi
 # Detect Pi model to determine I2C hardware module
 PI_MODEL="unknown"
 if [ -f /proc/device-tree/model ]; then
-    PI_MODEL=$(cat /proc/device-tree/model 2>/dev/null || echo "unknown")
+    # Remove null byte from device-tree/model (it ends with \0)
+    PI_MODEL=$(cat /proc/device-tree/model 2>/dev/null | tr -d '\0' || echo "unknown")
 fi
 
 # Determine I2C hardware module based on Pi model
@@ -173,7 +304,7 @@ else
 fi
 
 echo ""
-echo "Step 5: Setting up GPIO and I2C permissions..."
+echo "Step 6: Setting up GPIO and I2C permissions..."
 # Ensure I2C and GPIO groups exist
 groupadd -f i2c
 groupadd -f gpio
@@ -192,18 +323,20 @@ EOF
 cat > /etc/udev/rules.d/99-gpio.rules << 'EOF'
 SUBSYSTEM=="gpio", GROUP="gpio", MODE="0660"
 SUBSYSTEM=="gpio*", PROGRAM="/bin/sh -c 'chown -R root:gpio /sys/class/gpio && chmod -R 770 /sys/class/gpio; chown -R root:gpio /sys/devices/virtual/gpio && chmod -R 770 /sys/devices/virtual/gpio'"
+# Allow gpio group to access /dev/gpiomem (required for pigpio library)
+KERNEL=="gpiomem", GROUP="gpio", MODE="0666"
 EOF
 
 udevadm control --reload-rules
 udevadm trigger
 
 echo ""
-echo "Step 6: Installing Python dependencies..."
+echo "Step 7: Installing Python dependencies..."
 apt-get install -y python3 python3-pip python3-smbus python3-setuptools python3-full i2c-tools
 pip3 install --break-system-packages mcp9600 || pip3 install mcp9600
 
 echo ""
-echo "Step 7b: Installing pigpio from source (not available in Bookworm/Trixie repos)..."
+echo "Step 8: Installing pigpio from source (not available in Bookworm/Trixie repos)..."
 if ! command -v pigpiod &> /dev/null; then
     cd /tmp
     wget https://github.com/joan2937/pigpio/archive/refs/tags/v79.tar.gz
@@ -229,16 +362,16 @@ if ! command -v pigpiod &> /dev/null; then
     
     # Create systemd service file for pigpiod (not created automatically when compiled from source)
     # pigpio source doesn't include systemd service file, so we create it
+    # Note: pigpiod doesn't fork or create PID file, so use Type=simple (not forking)
     cat > /etc/systemd/system/pigpiod.service << EOF
 [Unit]
 Description=Daemon required to control GPIO pins via /dev/gpiomem
 After=network.target
 
 [Service]
-Type=forking
+Type=simple
 ExecStart=$PIGPIOD_PATH
-ExecStop=/bin/kill -s TERM \$MAINPID
-PIDFile=/var/run/pigpiod.pid
+ExecStop=/bin/killall pigpiod
 Restart=on-failure
 RestartSec=5
 
@@ -247,9 +380,45 @@ WantedBy=multi-user.target
 EOF
     echo "Created pigpiod.service systemd unit with ExecStart=$PIGPIOD_PATH"
     
-    # Reload systemd and enable/start pigpiod (following standard online guide approach)
+    # Reload systemd and enable pigpiod
     systemctl daemon-reload
-    systemctl enable --now pigpiod
+    systemctl enable pigpiod
+    
+    # Stop any existing pigpiod process first (clean start)
+    systemctl stop pigpiod 2>/dev/null || killall pigpiod 2>/dev/null || true
+    sleep 1
+    
+    # Start with timeout to prevent hanging
+    timeout 10 systemctl start pigpiod 2>/dev/null || systemctl start pigpiod 2>/dev/null || true
+    sleep 2  # Give it time to start
+    
+    # Verify pigpiod is actually running (check process, not just systemd status)
+    PIGPIOD_RUNNING=false
+    if pgrep -f "/usr/local/bin/pigpiod" > /dev/null 2>&1 || pgrep -f "$PIGPIOD_PATH" > /dev/null 2>&1; then
+        PIGPIOD_RUNNING=true
+        echo "✓ pigpiod process is running"
+        
+        # Verify /dev/gpiomem is accessible
+        if [ -e /dev/gpiomem ]; then
+            echo "✓ GPIO device /dev/gpiomem is accessible"
+        else
+            echo "⚠ GPIO device /dev/gpiomem not found (may need reboot)"
+        fi
+    else
+        echo "⚠ pigpiod process is NOT running"
+        echo "   Check: sudo systemctl status pigpiod"
+        echo "   Check: sudo journalctl -u pigpiod -n 20"
+    fi
+    
+    # Check systemd status (may show activating if PID file missing, but process is running)
+    if systemctl is-active --quiet pigpiod; then
+        echo "✓ pigpiod service is active"
+    elif [ "$PIGPIOD_RUNNING" = "true" ]; then
+        echo "⚠ pigpiod process is running but service shows as activating"
+        echo "   This is OK - process is working, systemd status may be misleading"
+    else
+        echo "⚠ pigpiod service is not active"
+    fi
     
     # Clean up
     cd /
@@ -272,16 +441,16 @@ else
     # Make sure service file exists (pigpio compiled from source doesn't create it)
     if [ ! -f /etc/systemd/system/pigpiod.service ]; then
         # Create service file with correct path
+        # Note: pigpiod doesn't fork or create PID file, so use Type=simple
         cat > /etc/systemd/system/pigpiod.service << EOF
 [Unit]
 Description=Daemon required to control GPIO pins via /dev/gpiomem
 After=network.target
 
 [Service]
-Type=forking
+Type=simple
 ExecStart=$PIGPIOD_PATH
-ExecStop=/bin/kill -s TERM \$MAINPID
-PIDFile=/var/run/pigpiod.pid
+ExecStop=/bin/killall pigpiod
 Restart=on-failure
 RestartSec=5
 
@@ -291,19 +460,63 @@ EOF
         echo "Created pigpiod.service systemd unit with ExecStart=$PIGPIOD_PATH"
         systemctl daemon-reload
     else
-        # Verify service file has correct path (update if needed)
+        # Verify service file has correct path and type (update if needed)
         if ! grep -q "ExecStart=$PIGPIOD_PATH" /etc/systemd/system/pigpiod.service 2>/dev/null; then
             echo "Updating pigpiod.service to use correct path: $PIGPIOD_PATH"
             sed -i "s|ExecStart=.*|ExecStart=$PIGPIOD_PATH|" /etc/systemd/system/pigpiod.service
             systemctl daemon-reload
         fi
+        # Fix service type if it's set to forking (causes hangs)
+        if grep -q "Type=forking" /etc/systemd/system/pigpiod.service 2>/dev/null; then
+            echo "Fixing pigpiod.service type (forking causes hangs, changing to simple)"
+            sed -i 's/Type=forking/Type=simple/' /etc/systemd/system/pigpiod.service
+            sed -i '/PIDFile=/d' /etc/systemd/system/pigpiod.service  # Remove PIDFile line
+            sed -i 's|ExecStop=/bin/kill -s TERM.*|ExecStop=/bin/killall pigpiod|' /etc/systemd/system/pigpiod.service
+            systemctl daemon-reload
+        fi
     fi
-    # Make sure daemon is enabled and running (using --now flag like online guides)
-    systemctl enable --now pigpiod 2>/dev/null || true
+    # Enable service (don't use --now to avoid hanging, start separately)
+    systemctl enable pigpiod 2>/dev/null || true
+    
+    # Stop any existing pigpiod process first (clean start)
+    systemctl stop pigpiod 2>/dev/null || killall pigpiod 2>/dev/null || true
+    sleep 1
+    
+    # Start service with timeout to prevent hanging
+    timeout 10 systemctl start pigpiod 2>/dev/null || systemctl start pigpiod 2>/dev/null || true
+    sleep 2  # Give it time to start
+    
+    # Verify pigpiod is actually running (check process, not just systemd status)
+    PIGPIOD_RUNNING=false
+    if pgrep -f "/usr/local/bin/pigpiod" > /dev/null 2>&1 || pgrep -f "$PIGPIOD_PATH" > /dev/null 2>&1; then
+        PIGPIOD_RUNNING=true
+        echo "✓ pigpiod process is running"
+        
+        # Verify /dev/gpiomem is accessible
+        if [ -e /dev/gpiomem ]; then
+            echo "✓ GPIO device /dev/gpiomem is accessible"
+        else
+            echo "⚠ GPIO device /dev/gpiomem not found (may need reboot)"
+        fi
+    else
+        echo "⚠ pigpiod process is NOT running"
+        echo "   Check: sudo systemctl status pigpiod"
+        echo "   Check: sudo journalctl -u pigpiod -n 20"
+    fi
+    
+    # Check systemd status (may show activating if PID file missing, but process is running)
+    if systemctl is-active --quiet pigpiod; then
+        echo "✓ pigpiod service is active"
+    elif [ "$PIGPIOD_RUNNING" = "true" ]; then
+        echo "⚠ pigpiod process is running but service shows as activating"
+        echo "   This is OK - process is working, systemd status may be misleading"
+    else
+        echo "⚠ pigpiod service is not active"
+    fi
 fi
 
 echo ""
-echo "Step 8: Setting up application directory..."
+echo "Step 9: Setting up application directory..."
 INSTALL_DIR="/opt/silvia-pid"
 if [ -d "$INSTALL_DIR" ]; then
     echo "Directory $INSTALL_DIR already exists"
@@ -318,13 +531,15 @@ if [ -d "$INSTALL_DIR" ]; then
     fi
 fi
 
-# Get the directory where this script is located
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-
-# Copy application files
+# Copy application files from project directory to install directory
+# Note: When running from copied location, PROJECT_DIR points to install location
 mkdir -p "$INSTALL_DIR"
-cp -r "$PROJECT_DIR"/* "$INSTALL_DIR/" 2>/dev/null || true
+if [ -d "$PROJECT_DIR" ] && [ "$PROJECT_DIR" != "$INSTALL_DIR" ]; then
+    cp -r "$PROJECT_DIR"/* "$INSTALL_DIR/" 2>/dev/null || true
+else
+    echo "WARNING: Cannot copy files (already installed or source not found)"
+    echo "If reinstalling, you may need to manually copy files to $INSTALL_DIR"
+fi
 
 # Set ownership
 if [ -n "$SUDO_USER" ]; then
@@ -332,13 +547,69 @@ if [ -n "$SUDO_USER" ]; then
 fi
 
 echo ""
-echo "Step 9: Building Docker images and starting services..."
-cd "$INSTALL_DIR"
-"$DOCKER_CMD" compose build --no-cache
-"$DOCKER_CMD" compose up -d
+echo "Step 10: Pre-pulling Docker images..."
+if [ $LOW_POWER_MODE -eq 1 ]; then
+    echo "⚠ Power-saving mode: Pulling images one at a time with delays"
+    echo "   This step is VERY power-intensive (large downloads + CPU)"
+    cd "$INSTALL_DIR"
+    
+    # Pre-pull base images one at a time with delays (reduces simultaneous load)
+    echo "Pre-pulling MongoDB image (4.4.18 for Pi 3 compatibility)..."
+    "$DOCKER_CMD" pull mongo:4.4.18 || {
+        echo "⚠ Failed to pull MongoDB image, retrying..."
+        "$DOCKER_CMD" pull mongo:4.4.18
+    }
+    echo "✓ MongoDB image pulled"
+    sleep 5  # Pause to reduce peak load
+    
+    echo "Pre-pulling Node.js base image..."
+    "$DOCKER_CMD" pull node:18-bookworm || {
+        echo "⚠ Failed to pull Node.js image, retrying..."
+        "$DOCKER_CMD" pull node:18-bookworm
+    }
+    echo "✓ Node.js image pulled"
+    sleep 5  # Pause to reduce peak load
+    
+    echo "Pre-pulling Uptime Kuma image..."
+    "$DOCKER_CMD" pull louislam/uptime-kuma:1 || {
+        echo "⚠ Failed to pull Uptime Kuma image, retrying..."
+        "$DOCKER_CMD" pull louislam/uptime-kuma:1
+    }
+    echo "✓ Uptime Kuma image pulled"
+    sleep 5  # Pause to reduce peak load
+else
+    echo "✓ Pulling all images in parallel (full speed)"
+    cd "$INSTALL_DIR"
+    "$DOCKER_CMD" pull mongo:4.4.18 node:18-bookworm louislam/uptime-kuma:1 || {
+        echo "⚠ Some images failed to pull, retrying individually..."
+        "$DOCKER_CMD" pull mongo:4.4.18
+        "$DOCKER_CMD" pull node:18-bookworm
+        "$DOCKER_CMD" pull louislam/uptime-kuma:1
+    }
+    echo "✓ All images pulled"
+fi
 
 echo ""
-echo "Step 10: Setting up systemd service..."
+echo "Building Docker images (this may take 10-20 minutes)..."
+if [ $LOW_POWER_MODE -eq 1 ]; then
+    echo "⚠ Power-saving mode: Building with reduced CPU speed"
+fi
+"$DOCKER_CMD" compose build --no-cache || {
+    echo "⚠ Build failed, retrying..."
+    "$DOCKER_CMD" compose build --no-cache
+}
+echo "✓ Docker images built"
+if [ $LOW_POWER_MODE -eq 1 ]; then
+    sleep 5  # Pause after build
+fi
+
+echo ""
+echo "Starting Docker services..."
+"$DOCKER_CMD" compose up -d
+echo "✓ Docker services started"
+
+echo ""
+echo "Step 11: Setting up systemd service..."
 cp "$INSTALL_DIR/deploy/silvia-pid.service" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable silvia-pid.service
@@ -348,6 +619,18 @@ echo "=== Installation Complete ==="
 echo ""
 echo "Note: All application code runs inside Docker containers - no Node.js needed on host OS"
 echo ""
+
+# Check for power supply issues (critical!)
+if command -v vcgencmd &> /dev/null; then
+    THROTTLED=$(vcgencmd get_throttled | cut -d= -f2)
+    if [ "$THROTTLED" != "0x0" ] && [ "$THROTTLED" != "0x50000" ]; then
+        echo "⚠ WARNING: Power supply issues detected (throttled=$THROTTLED)"
+        echo "   This can cause system crashes and reboots!"
+        echo "   Fix: Use official Raspberry Pi power supply (5V, 2.5A+)"
+        echo ""
+    fi
+fi
+
 echo "Next steps:"
 echo "1. Review and adjust /opt/silvia-pid/config.json for your PID settings"
 echo "2. If using SSL, copy your certificates and update /opt/silvia-pid/.env"
@@ -357,15 +640,33 @@ echo "5. Check status: sudo systemctl status silvia-pid"
 echo "6. View logs: sudo docker compose -f /opt/silvia-pid/docker-compose.yml logs -f"
 echo "7. Verify hardware (optional): See HARDWARE_VERIFICATION.md for testing steps"
 echo ""
-echo "Tip: If experiencing connection drops during installation, use screen or tmux:"
-echo "  screen -S install    # Start screen session"
+echo "Tip: If experiencing connection drops or reboots during installation:"
+echo "  # Use tmux (more reliable than screen):"
+echo "  sudo apt install tmux"
+echo "  tmux new -s install"
 echo "  sudo bash deploy/install.sh"
-echo "  # Press Ctrl+A then D to detach (process continues in background)"
+echo "  # Detach: Press Ctrl+B then D"
+echo "  # Reattach: tmux attach -t install"
+echo ""
+echo "  # Or use screen:"
+echo "  screen -S install"
+echo "  sudo bash deploy/install.sh"
+echo "  # Detach: Press Ctrl+A then D"
 echo "  # Reattach: screen -r install"
 echo ""
+echo "  # Note: Sessions don't survive reboots - if Pi reboots, session is lost"
+echo ""
 
-if [ "$I2C_MODIFIED" -eq 1 ]; then
-    echo "IMPORTANT: I2C was just enabled. You MUST reboot before starting the service."
+# Check if reboot is needed
+REBOOT_NEEDED=${REBOOT_NEEDED:-0}
+if [ "$I2C_MODIFIED" -eq 1 ] || [ "$REBOOT_NEEDED" -eq 1 ]; then
+    echo "IMPORTANT: Boot configuration changed. You MUST reboot before starting the service."
+    if [ "$REBOOT_NEEDED" -eq 1 ]; then
+        echo "   Changes: DRM overlay disabled and/or GPU memory configured for pigpiod compatibility"
+    fi
+    if [ "$I2C_MODIFIED" -eq 1 ]; then
+        echo "   Changes: I2C was just enabled"
+    fi
     echo ""
     read -p "Reboot now? (y/N) " -n 1 -r
     echo

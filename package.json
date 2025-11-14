@@ -10,11 +10,12 @@
   "author": "srjwebster",
   "license": "ISC",
   "dependencies": {
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "liquid-pid": "^1.0.0",
     "mongodb": "^6.21.0",
-    "pigpio": "^3.2.3",
+    "pigpio-client": "^1.0.0",
     "socket.io": "^4.8.1"
   },
   "nothing": {

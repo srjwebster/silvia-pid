@@ -237,6 +237,7 @@
             border-radius: 4px;
             background: var(--bg-secondary);
             outline: none;
+            appearance: none;
             -webkit-appearance: none;
         }
 
@@ -319,32 +320,125 @@
             margin-top: 10px;
         }
 
-        @media (max-width: 768px) {
-            .container {
-                padding: 10px;
+            .api-key-panel {
+                background: var(--bg-card);
+                padding: 20px;
+                border-radius: 12px;
+                border: 1px solid var(--border);
+                box-shadow: 0 2px 8px var(--shadow);
+                margin-top: 20px;
             }
 
-            h1 {
-                font-size: 1.5rem;
+            .api-key-label {
+                display: block;
+                font-size: 0.9rem;
+                font-weight: 600;
+                color: var(--text-primary);
+                margin-bottom: 10px;
             }
 
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .mode-buttons {
-                flex-direction: column;
-            }
-
-            #chart {
-                height: 400px;
-            }
-
-            .header-controls {
-                flex-direction: column;
+            .api-key-input-group {
+                display: flex;
                 gap: 10px;
+                align-items: center;
             }
-        }
+
+            .api-key-input {
+                flex: 1;
+                padding: 10px 12px;
+                border: 2px solid var(--border);
+                background: var(--bg-secondary);
+                color: var(--text-primary);
+                border-radius: 8px;
+                font-size: 1rem;
+                font-family: monospace;
+            }
+
+            .api-key-input:focus {
+                outline: none;
+                border-color: var(--accent);
+            }
+
+            .api-key-checkbox-label {
+                display: flex;
+                align-items: center;
+                gap: 5px;
+                font-size: 0.9rem;
+                color: var(--text-secondary);
+                cursor: pointer;
+                user-select: none;
+            }
+
+            .api-key-checkbox {
+                cursor: pointer;
+            }
+
+            .api-key-save-btn {
+                padding: 10px 20px;
+                background: var(--accent);
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 0.9rem;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.3s;
+            }
+
+            .api-key-save-btn:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 4px 12px var(--shadow);
+            }
+
+            .api-key-status {
+                margin-top: 10px;
+                font-size: 0.85rem;
+                color: var(--text-secondary);
+            }
+
+            .api-key-status.saved {
+                color: var(--success);
+            }
+
+            .api-key-status.error {
+                color: var(--danger);
+            }
+
+            @media (max-width: 768px) {
+                .container {
+                    padding: 10px;
+                }
+
+                h1 {
+                    font-size: 1.5rem;
+                }
+
+                .stats-grid {
+                    grid-template-columns: 1fr;
+                }
+
+                .mode-buttons {
+                    flex-direction: column;
+                }
+
+                #chart {
+                    height: 400px;
+                }
+
+                .header-controls {
+                    flex-direction: column;
+                    gap: 10px;
+                }
+
+                .api-key-input-group {
+                    flex-direction: column;
+                    align-items: stretch;
+                }
+
+                .api-key-save-btn {
+                    width: 100%;
+                }
+            }
 
         .notification {
             position: fixed;
@@ -389,30 +483,40 @@
             </div>
         </header>
 
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-label">Current Temperature</div>
-                <div class="stat-value" id="currentTemp">--</div>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Current Temperature</div>
+                    <div class="stat-value" id="currentTemp">--</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Target Temperature</div>
+                    <div class="stat-value target" id="targetTemp">--</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Heater Output</div>
+                    <div class="stat-value output" id="outputPercent">--</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Machine State</div>
+                    <div class="stat-value" id="machineState">--</div>
+                    <div class="stat-label" style="font-size: 0.75rem; margin-top: 5px; opacity: 0.7;" id="machineStateDesc"></div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">PID Mode</div>
+                    <div class="stat-value" id="pidMode">--</div>
+                    <div class="stat-label" style="font-size: 0.75rem; margin-top: 5px; opacity: 0.7;" id="pidModeDesc"></div>
+                </div>
             </div>
-            <div class="stat-card">
-                <div class="stat-label">Target Temperature</div>
-                <div class="stat-value target" id="targetTemp">--</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Heater Output</div>
-                <div class="stat-value output" id="outputPercent">--</div>
-            </div>
-        </div>
 
         <div class="controls-panel">
             <div class="control-group">
                 <label class="control-label">Mode</label>
                 <div class="mode-buttons">
-                    <button class="mode-btn active" id="espressoBtn" data-mode="espresso" data-temp="100">
-                        <span>☕</span> Espresso (100°C)
+                    <button class="mode-btn active" id="espressoBtn" data-mode="espresso">
+                        <span>☕</span> Espresso
                     </button>
-                    <button class="mode-btn" id="steamBtn" data-mode="steam" data-temp="140">
-                        <span>🫖</span> Steam (140°C)
+                    <button class="mode-btn" id="steamBtn" data-mode="steam">
+                        <span>🫖</span> Steam
                     </button>
                 </div>
             </div>
@@ -429,11 +533,24 @@
             </div>
         </div>
 
-        <div class="chart-container">
-            <div id="chart"></div>
-            <div class="last-update">Last update: <span id="lastUpdate">--</span></div>
+            <div class="chart-container">
+                <div id="chart"></div>
+                <div class="last-update">Last update: <span id="lastUpdate">--</span></div>
+            </div>
+
+            <div class="api-key-panel">
+                <label class="api-key-label">API Key:</label>
+                <div class="api-key-input-group">
+                    <input type="password" id="apiKeyInput" class="api-key-input" placeholder="Enter API key for write operations">
+                    <label class="api-key-checkbox-label">
+                        <input type="checkbox" id="apiKeyShow" class="api-key-checkbox">
+                        Show
+                    </label>
+                    <button id="apiKeySave" class="api-key-save-btn">Save</button>
+                </div>
+                <div class="api-key-status" id="apiKeyStatus"></div>
+            </div>
         </div>
-    </div>
 
     <script>
         class SilviaDashboard {
@@ -446,11 +563,18 @@
                 this.currentOutput = 0;
                 this.targetTemp = 100;
                 this.mode = 'espresso';
+                this.espressoTemp = 100;
+                this.steamTemp = 140;
                 
                 this.initChart();
                 this.initWebSocket();
                 this.initControls();
                 this.initTheme();
+                this.initApiKey(); // Initialize API key management
+                this.loadCurrentMode(); // Load current mode from server on startup
+                
+                // Initialize PID mode display
+                this.updatePIDMode(undefined);
             }
 
             initChart() {
@@ -517,7 +641,7 @@
                             name: 'Temperature (°C)',
                             min: 0,
                             max: 160,
-                            position: 'left',
+            position: 'left',
                             axisLine: {
                                 lineStyle: {
                                     color: '#e74c3c'
@@ -538,7 +662,7 @@
                         {
                             type: 'value',
                             name: 'Output (%)',
-                            min: 0,
+              min: 0,
                             max: 100,
                             position: 'right',
                             axisLine: {
@@ -603,7 +727,10 @@
 
             initWebSocket() {
                 // Socket.IO v4.x - use io() instead of io.connect()
+                // Use secure connection if page is loaded via HTTPS
+                const isSecure = window.location.protocol === 'https:';
                 this.socket = io({
+                    secure: isSecure,
                     reconnection: true,
                     reconnectionDelay: 1000,
                     reconnectionDelayMax: 5000,
@@ -636,19 +763,25 @@
                     // Update current values with latest data
                     if (data.length > 0) {
                         const latest = data[data.length - 1];
-                        this.updateCurrentValues(latest.temperature, latest.output);
+                        // pid_mode might not exist in old records, use undefined if missing
+                        this.updateCurrentValues(latest.temperature, latest.output, latest.pid_mode || undefined);
                     }
                 });
 
-                // Receive incremental updates
-                this.socket.on('temp_update', (newData) => {
-                    newData.forEach(record => {
-                        this.chartData.temperature.push([record.timestamp, record.temperature]);
-                        this.chartData.output.push([record.timestamp, record.output]);
+                    // Receive incremental updates
+                    this.socket.on('temp_update', (newData) => {
+                        let latestRecord = null;
+                        newData.forEach(record => {
+                            this.chartData.temperature.push([record.timestamp, record.temperature]);
+                            this.chartData.output.push([record.timestamp, record.output]);
+                            latestRecord = record; // Keep track of latest record
+                        });
                         
-                        // Update current values
-                        this.updateCurrentValues(record.temperature, record.output);
-                    });
+                        // Update current values with latest record (includes pid_mode)
+                        if (latestRecord) {
+                            // pid_mode might not exist in old records, use undefined if missing
+                            this.updateCurrentValues(latestRecord.temperature, latestRecord.output, latestRecord.pid_mode || undefined);
+                        }
                     
                     // Keep last 600 points (10 minutes at 1 sec intervals)
                     if (this.chartData.temperature.length > 600) {
@@ -665,15 +798,94 @@
                     this.updateStatus(false);
                 });
 
-                // Listen for mode changes (e.g., steam timeout)
-                this.socket.on('mode_change', (data) => {
-                    console.log('Mode changed:', data);
-                    if (data.mode === 'espresso' && data.reason === 'steam_timeout') {
-                        this.setMode('espresso', 100);
-                        this.showNotification('Steam timeout - switched to espresso mode');
+                    // Listen for mode changes (e.g., steam timeout)
+                    this.socket.on('mode_change', (data) => {
+                        console.log('Mode changed:', data);
+                        if (data.mode === 'espresso' && data.reason === 'steam_timeout') {
+                            this.setMode('espresso', 100);
+                            this.showNotification('Steam timeout - switched to espresso mode');
+                        }
+                    });
+
+                    // Listen for machine state updates
+                    this.socket.on('machine_state', (data) => {
+                        console.log('Machine state update:', data);
+                        if (data.machine_state) {
+                            this.updateMachineState(data.machine_state, data.machine_state_updated);
+                        }
+                    });
+                }
+
+            async loadCurrentMode() {
+                try {
+                    const response = await fetch('/api/mode', this.getFetchOptions());
+                    const data = await response.json();
+                    
+                    if (data.mode && data.target_temperature) {
+                        // Store saved temperatures for each mode
+                        this.espressoTemp = data.espresso_temperature || 100;
+                        this.steamTemp = data.steam_temperature || 140;
+                        
+                        // Update mode button labels with saved temperatures
+                        document.getElementById('espressoBtn').innerHTML = `<span>☕</span> Espresso (${this.espressoTemp}°C)`;
+                        document.getElementById('steamBtn').innerHTML = `<span>🫖</span> Steam (${this.steamTemp}°C)`;
+                        
+                        // Restore the actual mode and temperature from server
+                        this.mode = data.mode;
+                        this.targetTemp = data.target_temperature;
+                        
+                        // Update UI to match server state
+                        this.setMode(data.mode, data.target_temperature);
+                        
+                        // If in steam mode and timer is active, start the countdown
+                        if (data.mode === 'steam' && data.steam_time_remaining) {
+                            this.startSteamTimer(data.steam_time_remaining);
+                        }
+                        
+                        console.log(`Restored mode: ${data.mode} at ${data.target_temperature}°C`);
                     }
-                });
+                } catch (err) {
+                    console.error('Error loading current mode:', err);
+                    // Continue with default espresso mode if fetch fails
+                }
             }
+
+            updateMachineState(state, updatedTime) {
+                const stateElement = document.getElementById('machineState');
+                const descElement = document.getElementById('machineStateDesc');
+                
+                if (!stateElement || !descElement) return;
+                
+                // Capitalize first letter
+                const displayState = state ? state.charAt(0).toUpperCase() + state.slice(1) : 'Unknown';
+                stateElement.textContent = displayState;
+                
+                // Set color based on state
+                const stateColors = {
+                    'off': 'var(--text-secondary)',
+                    'heating': 'var(--warning)',
+                    'ready': 'var(--success)',
+                    'unknown': 'var(--text-secondary)'
+                };
+                stateElement.style.color = stateColors[state] || stateColors['unknown'];
+                
+                // Update description
+                const descriptions = {
+                    'off': 'Machine is off (temperature not rising) - data not being recorded',
+                    'heating': 'Machine is heating up (temperature rising)',
+                    'ready': 'Machine is ready (at or near target temperature)',
+                    'unknown': 'Machine state unknown'
+                };
+                descElement.textContent = descriptions[state] || descriptions['unknown'];
+                
+                // Show update time if available
+                if (updatedTime) {
+                    const updateDate = new Date(updatedTime);
+                    const timeStr = updateDate.toLocaleTimeString();
+                    descElement.textContent += ` (updated: ${timeStr})`;
+                }
+            }
+
 
             updateChart() {
                 this.chart.setOption({
@@ -684,13 +896,53 @@
                 });
             }
 
-            updateCurrentValues(temp, output) {
-                this.currentTemp = temp;
-                this.currentOutput = output;
-                
-                document.getElementById('currentTemp').textContent = temp.toFixed(1) + '°C';
-                document.getElementById('outputPercent').textContent = output.toFixed(0) + '%';
-            }
+                updateCurrentValues(temp, output, pidMode) {
+                    this.currentTemp = temp;
+                    this.currentOutput = output;
+                    
+                    document.getElementById('currentTemp').textContent = temp.toFixed(1) + '°C';
+                    document.getElementById('outputPercent').textContent = output.toFixed(0) + '%';
+                    
+                    // Update PID mode if provided
+                    if (pidMode !== undefined) {
+                        this.updatePIDMode(pidMode);
+                    }
+                }
+
+                updatePIDMode(mode) {
+                    const modeElement = document.getElementById('pidMode');
+                    const descElement = document.getElementById('pidModeDesc');
+                    
+                    if (!modeElement || !descElement) return;
+                    
+                    // Handle missing or undefined mode
+                    if (!mode || mode === 'undefined' || mode === 'null') {
+                        modeElement.textContent = '--';
+                        modeElement.style.color = 'var(--text-secondary)';
+                        descElement.textContent = 'Waiting for data...';
+                        return;
+                    }
+                    
+                    // Capitalize first letter
+                    const displayMode = mode.charAt(0).toUpperCase() + mode.slice(1);
+                    modeElement.textContent = displayMode;
+                    
+                    // Set color based on mode
+                    const modeColors = {
+                        'normal': 'var(--accent)',
+                        'recovery': 'var(--warning)',
+                        'unknown': 'var(--text-secondary)'
+                    };
+                    modeElement.style.color = modeColors[mode] || modeColors['unknown'];
+                    
+                    // Update description
+                    const descriptions = {
+                        'normal': 'Normal PID operation (maintaining temperature)',
+                        'recovery': 'Recovery mode (faster heating after cold water refill)',
+                        'unknown': 'PID mode unknown'
+                    };
+                    descElement.textContent = descriptions[mode] || descriptions['unknown'];
+                }
 
             updateStatus(connected) {
                 const dot = document.getElementById('statusDot');
@@ -764,12 +1016,30 @@
 
             async setModeAPI(mode) {
                 try {
-                    const response = await fetch(`/api/mode/${mode}`);
-                    const data = await response.json();
+                    const response = await fetch(`/api/mode/${mode}`, this.getFetchOptions());
                     
+                    // Handle 403 (authentication required)
+                    if (response.status === 403) {
+                        const errorData = await response.json();
+                        this.showNotification(errorData.message || 'API key required', 'error');
+                        document.getElementById('apiKeyStatus').textContent = 'API key required or invalid';
+                        document.getElementById('apiKeyStatus').className = 'api-key-status error';
+                        return;
+                    }
+                    
+                    const data = await response.json();
                     if (data.success) {
                         const temp = data.temperature;
                         this.setMode(mode, temp);
+                        
+                        // Update saved temperature for this mode
+                        if (mode === 'espresso') {
+                            this.espressoTemp = temp;
+                            document.getElementById('espressoBtn').innerHTML = `<span>☕</span> Espresso (${temp}°C)`;
+                        } else if (mode === 'steam') {
+                            this.steamTemp = temp;
+                            document.getElementById('steamBtn').innerHTML = `<span>🫖</span> Steam (${temp}°C)`;
+                        }
                         
                         if (mode === 'steam' && data.timeout_seconds) {
                             this.showNotification(`Steam mode activated (${data.timeout_seconds}s timeout)`);
@@ -789,15 +1059,36 @@
 
             async applyTemperature(temp) {
                 try {
-                    const response = await fetch(`/api/temp/set/${temp}`);
-                    const data = await response.json();
+                    const response = await fetch(`/api/temp/set/${temp}`, this.getFetchOptions());
                     
-                    if (data.success) {
+                    // Handle 403 (authentication required)
+                    if (response.status === 403) {
+                        const errorData = await response.json();
+                        this.showNotification(errorData.message || 'API key required', 'error');
+                        document.getElementById('apiKeyStatus').textContent = 'API key required or invalid';
+                        document.getElementById('apiKeyStatus').className = 'api-key-status error';
+                        return;
+                    }
+                    
+                    const data = await response.json();
+                    if (response.ok && data.success) {
                         this.targetTemp = temp;
                         document.getElementById('targetTemp').textContent = temp + '°C';
-                        this.showNotification(`Target temperature set to ${temp}°C`);
+                        
+                        // Update saved temperature for current mode and button label
+                        if (this.mode === 'espresso') {
+                            this.espressoTemp = temp;
+                            document.getElementById('espressoBtn').innerHTML = `<span>☕</span> Espresso (${temp}°C)`;
+                        } else if (this.mode === 'steam') {
+                            this.steamTemp = temp;
+                            document.getElementById('steamBtn').innerHTML = `<span>🫖</span> Steam (${temp}°C)`;
+                        }
+                        
+                        this.showNotification(`Target temperature set to ${temp}°C (saved for ${this.mode} mode)`);
                     } else {
-                        this.showNotification('Failed to set temperature', 'error');
+                        const errorMsg = data.message || data.error || 'Failed to set temperature';
+                        console.error('Failed to set temperature:', errorMsg);
+                        this.showNotification(errorMsg, 'error');
                     }
                 } catch (err) {
                     console.error('Error setting temperature:', err);
@@ -865,12 +1156,76 @@
                     this.updateChart();
                 });
             }
+
+            initApiKey() {
+                const apiKeyInput = document.getElementById('apiKeyInput');
+                const apiKeyShow = document.getElementById('apiKeyShow');
+                const apiKeySave = document.getElementById('apiKeySave');
+                const apiKeyStatus = document.getElementById('apiKeyStatus');
+
+                // Load saved API key from localStorage
+                const savedKey = localStorage.getItem('api_key');
+                if (savedKey) {
+                    apiKeyInput.value = savedKey;
+                    apiKeyStatus.textContent = 'API key loaded';
+                    apiKeyStatus.className = 'api-key-status saved';
+                } else {
+                    apiKeyStatus.textContent = 'No API key set. Enter key to enable write operations.';
+                    apiKeyStatus.className = 'api-key-status';
+                }
+
+                // Show/hide toggle
+                apiKeyShow.addEventListener('change', (e) => {
+                    apiKeyInput.type = e.target.checked ? 'text' : 'password';
+                });
+
+                // Save button
+                apiKeySave.addEventListener('click', () => {
+                    const key = apiKeyInput.value.trim();
+                    if (key) {
+                        localStorage.setItem('api_key', key);
+                        apiKeyStatus.textContent = 'API key saved';
+                        apiKeyStatus.className = 'api-key-status saved';
+                        this.showNotification('API key saved');
+                    } else {
+                        localStorage.removeItem('api_key');
+                        apiKeyStatus.textContent = 'API key removed';
+                        apiKeyStatus.className = 'api-key-status';
+                        this.showNotification('API key removed', 'error');
+                    }
+                });
+            }
+
+            // Get API key from localStorage for use in fetch requests
+            getApiKey() {
+                return localStorage.getItem('api_key') || '';
+            }
+
+            // Helper to add API key to fetch options
+            getFetchOptions(method = 'GET', body = null) {
+                const options = {
+                    method: method,
+                    headers: {}
+                };
+                
+                const apiKey = this.getApiKey();
+                if (apiKey) {
+                    options.headers['X-API-Key'] = apiKey;
+                }
+                
+                if (body) {
+                    options.headers['Content-Type'] = 'application/json';
+                    options.body = JSON.stringify(body);
+                }
+                
+                return options;
+            }
         }
 
         // Initialize dashboard when page loads
         document.addEventListener('DOMContentLoaded', () => {
             window.dashboard = new SilviaDashboard();
         });
-    </script>
+</script>
 </body>
 </html>

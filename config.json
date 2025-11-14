@@ -1,6 +1,11 @@
 {
   "target_temperature": 100,
-  "proportional":  2.6,
-  "integral" : 0.8,
-  "derivative": 80.0
+  "espresso_temperature": 100,
+  "steam_temperature": 140,
+  "proportional": 3.0,
+  "integral": 0.05,
+  "derivative": 30.0,
+  "recovery_proportional": 4.0,
+  "recovery_integral": 0.08,
+  "recovery_derivative": 35.0
 }

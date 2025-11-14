@@ -1,5 +1,29 @@
 # Connection Drops Troubleshooting Guide
 
+## ⚠️ CRITICAL: Check if Pi is Rebooting
+
+**If screen sessions disappear after connection drops, the Pi may be rebooting due to power supply issues!**
+
+### Quick Check
+
+```bash
+# Check if Pi recently rebooted
+uptime
+
+# Check boot time
+who -b
+
+# Check power supply (CRITICAL!)
+vcgencmd get_throttled
+# Should be: 0x0 (no issues)
+# If not 0x0: Power supply problem causing reboots!
+
+# Quick diagnostic
+bash scripts/check-reboot-status.sh
+```
+
+**Note:** Screen sessions don't survive reboots. If your Pi is rebooting, fix the power supply first (most common cause: undervoltage).
+
 ## Quick Fixes
 
 ### 1. Use Screen or Tmux (Immediate Workaround)

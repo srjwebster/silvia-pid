@@ -1,6 +1,7 @@
 // import required packages
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const fs = require('fs');
 const path = require('path');
 const MongoClient = require('mongodb').MongoClient;
@@ -13,11 +14,90 @@ const HTTP_PORT = parseInt(process.env.HTTP_PORT || '80');
 const HTTPS_PORT = parseInt(process.env.HTTPS_PORT || '443');
 const MONGODB_URL = process.env.MONGODB_URL || 'mongodb://localhost';
 const CONFIG_FILE = process.env.CONFIG_FILE || path.join(__dirname, 'config.json');
+const API_KEY = process.env.API_KEY || ''; // API key for write operations
 
 // create new express app and save it as "app"
 const app = express();
 app.use(cors());
+
+// Security headers for HTTPS
+if (USE_SSL) {
+  app.use((req, res, next) => {
+    // Force HTTPS
+    if (req.header('x-forwarded-proto') !== 'https' && req.secure === false) {
+      return res.redirect(`https://${req.header('host')}${req.url}`);
+    }
+    // Security headers
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    next();
+  });
+}
+
 app.use(express.json()); // Add JSON body parsing for API endpoints
+app.use(cookieParser()); // Parse cookies for API key
+
+// API Key authentication middleware (only for write operations)
+function requireApiKey(req, res, next) {
+  // If no API key is configured, allow all requests (backward compatible)
+  if (!API_KEY || API_KEY === '') {
+    return next();
+  }
+  
+  // Get API key from header or cookie
+  const providedKey = req.headers['x-api-key'] || req.cookies?.api_key || req.query.api_key;
+  
+  if (!providedKey) {
+    return res.status(403).json({
+      error: 'Authentication required',
+      message: 'API key required for this operation. Please enter your API key.'
+    });
+  }
+  
+  // Constant-time comparison to prevent timing attacks
+  const crypto = require('crypto');
+  const providedKeyBuffer = Buffer.from(providedKey, 'utf8');
+  const expectedKeyBuffer = Buffer.from(API_KEY, 'utf8');
+  
+  if (providedKeyBuffer.length !== expectedKeyBuffer.length) {
+    return res.status(403).json({
+      error: 'Invalid API key',
+      message: 'The provided API key is incorrect.'
+    });
+  }
+  
+  if (!crypto.timingSafeEqual(providedKeyBuffer, expectedKeyBuffer)) {
+    return res.status(403).json({
+      error: 'Invalid API key',
+      message: 'The provided API key is incorrect.'
+    });
+  }
+  
+  // Key is valid, proceed
+  next();
+}
+
+// Helper function to write config.json with permission retry
+function writeConfigFile(config) {
+  try {
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+  } catch (writeErr) {
+    if (writeErr.code === 'EACCES') {
+      // Permission denied - try to fix permissions and retry
+      try {
+        fs.chmodSync(CONFIG_FILE, 0o666);
+        fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+        console.warn('Fixed config.json permissions and retried write');
+      } catch (retryErr) {
+        throw new Error(`Permission denied: Cannot write to ${CONFIG_FILE}. Please run: sudo chmod 666 ${CONFIG_FILE} && sudo chown 999:999 ${CONFIG_FILE}`);
+      }
+    } else {
+      throw writeErr;
+    }
+  }
+}
 
 let server;
 let io;
@@ -82,8 +162,8 @@ app.get('/', (req, res) => {
   res.sendFile(__dirname + '/index.html');
 });
 
-// API endpoint to set target temperature
-app.get('/api/temp/set/:temp', (req, res) => {
+// API endpoint to set target temperature (saves to current mode's preference)
+app.get('/api/temp/set/:temp', requireApiKey, (req, res) => {
   try {
     const temp = parseFloat(req.params.temp);
     
@@ -97,15 +177,27 @@ app.get('/api/temp/set/:temp', (req, res) => {
     
     // Read current config
     const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    
+    // Update target temperature (active setting)
     config.target_temperature = temp;
     
-    // Write updated config
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+    // Save temperature preference for current mode
+    if (currentMode === 'espresso') {
+      config.espresso_temperature = temp;
+      console.log(`Espresso temperature preference saved: ${temp}°C`);
+    } else if (currentMode === 'steam') {
+      config.steam_temperature = temp;
+      console.log(`Steam temperature preference saved: ${temp}°C`);
+    }
     
-    console.log(`Target temperature updated to ${temp}°C`);
+    // Write updated config (with permission retry)
+    writeConfigFile(config);
+    
+    console.log(`Target temperature updated to ${temp}°C (saved for ${currentMode} mode)`);
     res.json({
       success: true,
       target_temperature: temp,
+      mode: currentMode,
       message: 'Target temperature updated'
     });
   } catch (err) {
@@ -127,8 +219,8 @@ app.get('/api/temp/get/:limit', (req, res) => {
   });
 });
 
-// API endpoint to set PID parameters
-app.get('/api/pid/set/:p-:i-:d', (req, res) => {
+// API endpoint to set PID parameters (all at once)
+app.get('/api/pid/set/:p-:i-:d', requireApiKey, (req, res) => {
   try {
     const p = parseFloat(req.params.p);
     const i = parseFloat(req.params.i);
@@ -155,8 +247,8 @@ app.get('/api/pid/set/:p-:i-:d', (req, res) => {
     config.integral = i;
     config.derivative = d;
     
-    // Write updated config
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+    // Write updated config (with permission retry)
+    writeConfigFile(config);
     
     console.log(`PID parameters updated: Kp=${p}, Ki=${i}, Kd=${d}`);
     res.json({
@@ -175,6 +267,161 @@ app.get('/api/pid/set/:p-:i-:d', (req, res) => {
   }
 });
 
+// API endpoint to update individual PID parameter
+// Usage: POST /api/pid/update with body: {"parameter": "proportional", "value": 4.5}
+// Or: GET /api/pid/update?parameter=proportional&value=4.5
+app.post('/api/pid/update', requireApiKey, express.json(), (req, res) => {
+  try {
+    const { parameter, value } = req.body;
+    
+    if (!parameter || value === undefined) {
+      return res.status(400).json({
+        error: 'Missing parameters',
+        message: 'Must provide "parameter" and "value" in request body'
+      });
+    }
+    
+    // Valid PID parameter names
+    const validParams = [
+      'proportional', 'integral', 'derivative',
+      'recovery_proportional', 'recovery_integral', 'recovery_derivative'
+    ];
+    
+    if (!validParams.includes(parameter)) {
+      return res.status(400).json({
+        error: 'Invalid parameter',
+        message: `Parameter must be one of: ${validParams.join(', ')}`
+      });
+    }
+    
+    const numValue = parseFloat(value);
+    if (isNaN(numValue) || numValue < 0) {
+      return res.status(400).json({
+        error: 'Invalid value',
+        message: 'Value must be a non-negative number'
+      });
+    }
+    
+    // Validate ranges
+    if (parameter.includes('proportional') && numValue > 10) {
+      return res.status(400).json({
+        error: 'Invalid value',
+        message: 'Proportional gain should be <= 10'
+      });
+    }
+    if (parameter.includes('integral') && numValue > 5) {
+      return res.status(400).json({
+        error: 'Invalid value',
+        message: 'Integral gain should be <= 5'
+      });
+    }
+    if (parameter.includes('derivative') && numValue > 100) {
+      return res.status(400).json({
+        error: 'Invalid value',
+        message: 'Derivative gain should be <= 100'
+      });
+    }
+    
+    // Read current config
+    const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    config[parameter] = numValue;
+    
+    // Write updated config (with permission retry)
+    writeConfigFile(config);
+    
+    console.log(`PID parameter updated: ${parameter} = ${numValue}`);
+    res.json({
+      success: true,
+      parameter: parameter,
+      value: numValue,
+      message: `Updated ${parameter} to ${numValue}`
+    });
+  } catch (err) {
+    console.error('Failed to update PID parameter:', err);
+    res.status(500).json({
+      error: 'Failed to update configuration',
+      message: err.message
+    });
+  }
+});
+
+// GET version for convenience (same logic as POST)
+app.get('/api/pid/update', requireApiKey, (req, res) => {
+  try {
+    const parameter = req.query.parameter;
+    const value = req.query.value;
+    
+    if (!parameter || value === undefined) {
+      return res.status(400).json({
+        error: 'Missing parameters',
+        message: 'Must provide "parameter" and "value" query parameters'
+      });
+    }
+    
+    // Valid PID parameter names
+    const validParams = [
+      'proportional', 'integral', 'derivative',
+      'recovery_proportional', 'recovery_integral', 'recovery_derivative'
+    ];
+    
+    if (!validParams.includes(parameter)) {
+      return res.status(400).json({
+        error: 'Invalid parameter',
+        message: `Parameter must be one of: ${validParams.join(', ')}`
+      });
+    }
+    
+    const numValue = parseFloat(value);
+    if (isNaN(numValue) || numValue < 0) {
+      return res.status(400).json({
+        error: 'Invalid value',
+        message: 'Value must be a non-negative number'
+      });
+    }
+    
+    // Validate ranges
+    if (parameter.includes('proportional') && numValue > 10) {
+      return res.status(400).json({
+        error: 'Invalid value',
+        message: 'Proportional gain should be <= 10'
+      });
+    }
+    if (parameter.includes('integral') && numValue > 5) {
+      return res.status(400).json({
+        error: 'Invalid value',
+        message: 'Integral gain should be <= 5'
+      });
+    }
+    if (parameter.includes('derivative') && numValue > 100) {
+      return res.status(400).json({
+        error: 'Invalid value',
+        message: 'Derivative gain should be <= 100'
+      });
+    }
+    
+    // Read current config
+    const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    config[parameter] = numValue;
+    
+    // Write updated config (with permission retry)
+    writeConfigFile(config);
+    
+    console.log(`PID parameter updated: ${parameter} = ${numValue}`);
+    res.json({
+      success: true,
+      parameter: parameter,
+      value: numValue,
+      message: `Updated ${parameter} to ${numValue}`
+    });
+  } catch (err) {
+    console.error('Failed to update PID parameter:', err);
+    res.status(500).json({
+      error: 'Failed to update configuration',
+      message: err.message
+    });
+  }
+});
+
 // Mode management
 let currentMode = 'espresso';
 let steamTimer = null;
@@ -182,22 +429,29 @@ const STEAM_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes default
 
 // Helper function to set mode
 function setMode(mode, duration = null) {
-  const modes = {
-    espresso: { temp: 100, name: 'Espresso' },
-    steam: { temp: 140, name: 'Steam' },
-    off: { temp: 0, name: 'Off' }
-  };
-  
-  if (!modes[mode]) {
+  if (mode !== 'espresso' && mode !== 'steam' && mode !== 'off') {
     throw new Error('Invalid mode');
   }
   
-  const modeConfig = modes[mode];
-  
-  // Update temperature
+  // Read config to get saved temperature for this mode
   const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-  config.target_temperature = modeConfig.temp;
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+  
+  let targetTemp;
+  if (mode === 'off') {
+    targetTemp = 0;
+  } else if (mode === 'steam') {
+    // Use saved steam temperature, or default to 140
+    targetTemp = config.steam_temperature || 140;
+  } else {
+    // Use saved espresso temperature, or default to 100
+    targetTemp = config.espresso_temperature || 100;
+  }
+  
+      // Update target temperature
+      config.target_temperature = targetTemp;
+      
+      // Write updated config (with permission retry)
+      writeConfigFile(config);
   
   currentMode = mode;
   
@@ -220,12 +474,18 @@ function setMode(mode, duration = null) {
     }, timeoutMs);
   }
   
-  console.log(`Mode changed to: ${modeConfig.name} (${modeConfig.temp}°C)`);
-  return modeConfig;
+  const modeNames = {
+    espresso: 'Espresso',
+    steam: 'Steam',
+    off: 'Off'
+  };
+  
+  console.log(`Mode changed to: ${modeNames[mode]} (${targetTemp}°C)`);
+  return { temp: targetTemp, name: modeNames[mode] };
 }
 
 // API endpoint to set mode to espresso
-app.get('/api/mode/espresso', (req, res) => {
+app.get('/api/mode/espresso', requireApiKey, (req, res) => {
   try {
     const modeConfig = setMode('espresso');
     res.json({
@@ -244,7 +504,7 @@ app.get('/api/mode/espresso', (req, res) => {
 });
 
 // API endpoint to set mode to steam (with optional duration in seconds)
-app.get('/api/mode/steam/:duration?', (req, res) => {
+app.get('/api/mode/steam/:duration?', requireApiKey, (req, res) => {
   try {
     const duration = req.params.duration ? parseInt(req.params.duration) : null;
     
@@ -276,7 +536,7 @@ app.get('/api/mode/steam/:duration?', (req, res) => {
 });
 
 // API endpoint to turn off
-app.get('/api/mode/off', (req, res) => {
+app.get('/api/mode/off', requireApiKey, (req, res) => {
   try {
     const modeConfig = setMode('off');
     res.json({
@@ -294,16 +554,37 @@ app.get('/api/mode/off', (req, res) => {
   }
 });
 
+// Helper function to determine mode from temperature
+function getModeFromTemperature(temp) {
+  // Determine mode based on temperature (with some tolerance)
+  if (temp === 0) {
+    return 'off';
+  } else if (temp >= 130) {
+    return 'steam';  // Steam mode typically 140°C
+  } else {
+    return 'espresso';  // Espresso mode typically 100°C
+  }
+}
+
 // API endpoint to get current mode
 app.get('/api/mode', (req, res) => {
   try {
     const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    
+    // If steam timer is active, we're definitely in steam mode
+    // Otherwise use currentMode (which should be accurate)
+    const actualMode = steamTimer ? 'steam' : currentMode;
+    
     const steamTimeRemaining = steamTimer ? Math.ceil((steamTimer._idleStart + steamTimer._idleTimeout - Date.now()) / 1000) : null;
     
     res.json({
-      mode: currentMode,
+      mode: actualMode,
       target_temperature: config.target_temperature,
-      steam_time_remaining: steamTimeRemaining
+      espresso_temperature: config.espresso_temperature || 100,
+      steam_temperature: config.steam_temperature || 140,
+      steam_time_remaining: steamTimeRemaining,
+      machine_state: config.machine_state || 'unknown',
+      machine_state_updated: config.machine_state_updated || null
     });
   } catch (err) {
     console.error('Failed to get mode:', err);
@@ -313,6 +594,36 @@ app.get('/api/mode', (req, res) => {
     });
   }
 });
+
+// API endpoint to get machine state
+app.get('/api/machine-state', (req, res) => {
+  try {
+    const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    
+    res.json({
+      machine_state: config.machine_state || 'unknown',
+      machine_state_updated: config.machine_state_updated || null,
+      description: getMachineStateDescription(config.machine_state)
+    });
+  } catch (err) {
+    console.error('Failed to get machine state:', err);
+    res.status(500).json({
+      error: 'Failed to get machine state',
+      message: err.message
+    });
+  }
+});
+
+// Helper function to get human-readable state description
+function getMachineStateDescription(state) {
+  const descriptions = {
+    'off': 'Machine is off (temperature not rising)',
+    'heating': 'Machine is heating up (temperature rising)',
+    'ready': 'Machine is ready (at or near target temperature)',
+    'unknown': 'Machine state unknown'
+  };
+  return descriptions[state] || 'Unknown state';
+}
 
 // Health check endpoint
 let lastTemperatureUpdate = Date.now();
@@ -407,6 +718,50 @@ function recordTemperatureUpdate() {
 // Track last broadcast time for incremental updates
 let lastBroadcastTime = Date.now();
 
+// Track last machine state for change detection
+let lastMachineState = null;
+
+// Send current machine state to a client
+function sendMachineState(socket) {
+  try {
+    const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    const state = {
+      machine_state: config.machine_state || 'unknown',
+      machine_state_updated: config.machine_state_updated || null,
+      description: getMachineStateDescription(config.machine_state)
+    };
+    socket.emit('machine_state', state);
+  } catch (err) {
+    console.error('Error sending machine state:', err);
+  }
+}
+
+// Broadcast machine state to all connected clients
+function broadcastMachineState() {
+  try {
+    const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    const currentState = config.machine_state || 'unknown';
+    
+    // Only broadcast if state changed
+    if (currentState !== lastMachineState) {
+      const state = {
+        machine_state: currentState,
+        machine_state_updated: config.machine_state_updated || null,
+        description: getMachineStateDescription(currentState)
+      };
+      
+      io.emit('machine_state', state);
+      lastMachineState = currentState;
+      
+      if (io.sockets.sockets.size > 0) {
+        console.log(`Broadcasted machine state change: ${currentState} to ${io.sockets.sockets.size} client(s)`);
+      }
+    }
+  } catch (err) {
+    console.error('Error broadcasting machine state:', err);
+  }
+}
+
 // WebSocket connection handling
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
@@ -419,6 +774,9 @@ io.on('connection', (socket) => {
     console.error('Error sending history:', err);
   });
   
+  // Send current machine state on connection
+  sendMachineState(socket);
+  
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
   });
@@ -427,6 +785,9 @@ io.on('connection', (socket) => {
     console.error('Socket error:', err);
   });
 });
+
+// Poll config.json for machine state changes every 2 seconds
+setInterval(broadcastMachineState, 2000);
 
 // Broadcast only new temperature readings
 async function broadcastNewReadings() {
@@ -506,3 +867,87 @@ async function read(limit) {
 
 // Start broadcasting new readings every second
 setInterval(broadcastNewReadings, 1000);
+
+// Periodically check for most recent temperature reading to update health check
+// This ensures health check works even when machine is off (not recording new data)
+async function checkLatestTemperatureReading() {
+  try {
+    const database = client.db('pid');
+    const collection = database.collection('temperatures');
+    
+    // Get the most recent reading (even if it's old)
+    const options = {
+      sort: { timestamp: -1 }, // Most recent first
+      limit: 1,
+      projection: { timestamp: 1 }
+    };
+    
+    const latest = await collection.findOne({}, options);
+    
+    if (latest && latest.timestamp) {
+      // Update health check timestamp if reading is recent (within last 5 minutes)
+      // This allows health check to work even when machine is off
+      const now = Date.now();
+      const readingAge = now - latest.timestamp;
+      const MAX_READING_AGE = 5 * 60 * 1000; // 5 minutes
+      
+      if (readingAge < MAX_READING_AGE) {
+        lastTemperatureUpdate = latest.timestamp;
+      }
+    }
+  } catch (err) {
+    // Silently fail - health check will show unhealthy if MongoDB is down
+    if (process.env.DEBUG === 'true') {
+      console.error('Error checking latest temperature reading:', err);
+    }
+  }
+}
+
+// Check for latest reading every 10 seconds (independent of WebSocket broadcasts)
+setInterval(checkLatestTemperatureReading, 10000);
+
+// Error handling to prevent crashes
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION - Web server error:', err);
+  console.error('Stack trace:', err.stack);
+  // Don't exit - keep the server running
+  // Log the error and continue
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('UNHANDLED REJECTION at:', promise);
+  console.error('Reason:', reason);
+  // Don't exit - keep the server running
+  // Log the error and continue
+});
+
+// Graceful shutdown handlers
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully...');
+  if (server) {
+    server.close(() => {
+      console.log('HTTP/HTTPS server closed');
+      if (client) {
+        client.close();
+      }
+      process.exit(0);
+    });
+  } else {
+    process.exit(0);
+  }
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully...');
+  if (server) {
+    server.close(() => {
+      console.log('HTTP/HTTPS server closed');
+      if (client) {
+        client.close();
+      }
+      process.exit(0);
+    });
+  } else {
+    process.exit(0);
+  }
+});
