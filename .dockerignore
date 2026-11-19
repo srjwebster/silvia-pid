@@ -12,16 +12,6 @@ README.md
 
 # Deployment files
 deploy/
-scripts/
-
-# Go code (not used)
-silvia-pid/
-cmd/
-internal/
-pkg/
-go.mod
-go.sum
-Makefile
 
 # Docker files
 Dockerfile
