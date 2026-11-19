@@ -299,7 +299,7 @@ else
         echo "This is expected if I2C was just enabled - reboot required"
     else
         echo "Try: sudo modprobe i2c-bcm2711 i2c-dev (or i2c-bcm2835 for Pi 3)"
-        echo "Or run: sudo bash scripts/diagnose-i2c.sh"
+        echo "Then check: sudo i2cdetect -y 1 (MCP9600 should show at 0x60)"
     fi
 fi
 
@@ -638,7 +638,7 @@ echo "3. Reboot the system: sudo reboot"
 echo "4. After reboot, start the service: sudo systemctl start silvia-pid"
 echo "5. Check status: sudo systemctl status silvia-pid"
 echo "6. View logs: sudo docker compose -f /opt/silvia-pid/docker-compose.yml logs -f"
-echo "7. Verify hardware (optional): See HARDWARE_VERIFICATION.md for testing steps"
+echo "7. Check the thermocouple: sudo docker compose -f /opt/silvia-pid/docker-compose.yml exec silvia-pid python3 temperature.py"
 echo ""
 echo "Tip: If experiencing connection drops or reboots during installation:"
 echo "  # Use tmux (more reliable than screen):"
